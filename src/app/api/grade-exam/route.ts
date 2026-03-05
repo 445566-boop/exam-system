@@ -132,8 +132,8 @@ ${JSON.stringify(answers, null, 2)}
       return NextResponse.json({ error: "批改失败" }, { status: 500 });
     }
 
-    // 保存错题到错题集
-    const wrongQuestions = gradeResult.results
+    // 保存错题到错题集（带去重和计数逻辑）
+    const wrongQuestionData = gradeResult.results
       .filter((r: { isCorrect: boolean }) => !r.isCorrect)
       .map((r: { questionId: number; question: string; userAnswer: string; correctAnswer: string }) => {
         const originalQuestion = questions.find((q: { id: number }) => q.id === r.questionId);
@@ -149,15 +149,66 @@ ${JSON.stringify(answers, null, 2)}
         };
       });
 
-    if (wrongQuestions.length > 0) {
-      await supabase.from("wrong_question").insert(wrongQuestions);
+    if (wrongQuestionData.length > 0) {
+      // 获取现有错题，用于去重
+      const questionIds = wrongQuestionData.map((w: { question_id: number }) => w.question_id).filter((id: number) => id);
+      const { data: existingWrong } = await supabase
+        .from("wrong_question")
+        .select("id, question_id")
+        .in("question_id", questionIds);
+
+      const existingMap = new Map(
+        (existingWrong || []).map((w: { id: number; question_id: number }) => [w.question_id, w.id])
+      );
+
+      // 分离需要更新和需要插入的记录
+      const toUpdate: number[] = [];
+      const toInsert: any[] = [];
+
+      for (const wq of wrongQuestionData) {
+        if (wq.question_id && existingMap.has(wq.question_id)) {
+          // 已存在，记录ID用于更新计数
+          toUpdate.push(existingMap.get(wq.question_id)!);
+        } else {
+          // 不存在，插入新记录
+          toInsert.push({
+            ...wq,
+            count: 1,
+          });
+        }
+      }
+
+      // 更新已有错题的计数（每次+1）
+      if (toUpdate.length > 0) {
+        for (const id of toUpdate) {
+          try {
+            await supabase.rpc("increment_wrong_count", { row_id: id });
+          } catch {
+            // 如果 RPC 不存在，使用普通更新
+            const { data: current } = await supabase
+              .from("wrong_question")
+              .select("count")
+              .eq("id", id)
+              .single();
+            await supabase
+              .from("wrong_question")
+              .update({ count: (current?.count || 0) + 1 })
+              .eq("id", id);
+          }
+        }
+      }
+
+      // 插入新错题
+      if (toInsert.length > 0) {
+        await supabase.from("wrong_question").insert(toInsert);
+      }
     }
 
     return NextResponse.json({
       score: gradeResult.score,
       total: gradeResult.total,
       correct: gradeResult.results.filter((r: { isCorrect: boolean }) => r.isCorrect).length,
-      wrong: wrongQuestions.length,
+      wrong: wrongQuestionData.length,
       details: gradeResult.results.map((r: { question: string; userAnswer: string; correctAnswer: string; isCorrect: boolean }) => ({
         question: r.question,
         userAnswer: r.userAnswer,

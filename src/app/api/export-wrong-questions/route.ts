@@ -129,12 +129,13 @@ async function generateWrongQuestionsDocument(questions: any[]) {
 
     // 题目
     typeQuestions.forEach((q) => {
-      // 题目内容
+      // 题目内容（包含错误次数）
+      const countText = q.count && q.count > 1 ? `（错误${q.count}次）` : '';
       sections.push(
         new Paragraph({
           children: [
             new TextRun({
-              text: `${questionNumber}. ${q.question}`,
+              text: `${questionNumber}. ${q.question}${countText}`,
               size: 24,
             }),
           ],

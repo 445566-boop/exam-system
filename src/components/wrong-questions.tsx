@@ -17,6 +17,7 @@ interface WrongQuestion {
   difficulty: number;
   options?: string[];
   explanation?: string;
+  count?: number;
   created_at: string;
 }
 
@@ -212,6 +213,11 @@ export default function WrongQuestions() {
                       <Badge className={getDifficultyColor(question.difficulty)}>
                         {getDifficultyLabel(question.difficulty)}
                       </Badge>
+                      {question.count && question.count > 1 && (
+                        <Badge variant="secondary" className="bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400">
+                          错误 {question.count} 次
+                        </Badge>
+                      )}
                       <span className="text-xs text-slate-400">
                         {new Date(question.created_at).toLocaleDateString()}
                       </span>
