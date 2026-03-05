@@ -54,22 +54,33 @@ export async function POST(request: NextRequest) {
 题库文档内容：
 ${text}`;
 
-    const response = await client.invoke([
+    // 使用流式输出获取完整响应
+    const stream = client.stream([
       { role: "user", content: prompt }
     ], { temperature: 0.3 });
+
+    // 收集完整响应
+    let fullContent = "";
+    for await (const chunk of stream) {
+      if (chunk.content) {
+        fullContent += chunk.content.toString();
+      }
+    }
+
+    console.log("LLM response length:", fullContent.length);
 
     // 解析 LLM 返回的 JSON
     let questions;
     try {
       // 提取 JSON 部分（处理可能的 markdown 代码块）
-      let content = response.content.trim();
+      let content = fullContent.trim();
       if (content.startsWith("```")) {
         content = content.replace(/```json\n?/g, "").replace(/```\n?/g, "");
       }
       questions = JSON.parse(content);
     } catch (e) {
-      console.error("Failed to parse LLM response:", response.content);
-      return NextResponse.json({ error: "题库解析失败，请检查文档格式" }, { status: 400 });
+      console.error("Failed to parse LLM response. Content preview:", fullContent.substring(0, 500));
+      return NextResponse.json({ error: "题库解析失败，请检查文档格式。LLM响应格式不正确，请重试。" }, { status: 400 });
     }
 
     // 验证并清理数据

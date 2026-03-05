@@ -3,6 +3,17 @@ import mammoth from "mammoth";
 import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 import { getSupabaseClient } from "@/storage/database/supabase-client";
 
+// 收集流式响应的辅助函数
+async function collectStreamResponse(stream: AsyncGenerator<any>): Promise<string> {
+  let content = "";
+  for await (const chunk of stream) {
+    if (chunk.content) {
+      content += chunk.content.toString();
+    }
+  }
+  return content;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -37,20 +48,23 @@ export async function POST(request: NextRequest) {
 试卷内容：
 ${text}`;
 
-    const parseResponse = await client.invoke([
+    // 使用流式输出获取完整响应
+    const parseStream = client.stream([
       { role: "user", content: parsePrompt }
     ], { temperature: 0.3 });
+
+    const parseResponseText = await collectStreamResponse(parseStream);
 
     // 解析 LLM 返回的 JSON
     let answers;
     try {
-      let content = parseResponse.content.trim();
+      let content = parseResponseText.trim();
       if (content.startsWith("```")) {
         content = content.replace(/```json\n?/g, "").replace(/```\n?/g, "");
       }
       answers = JSON.parse(content);
     } catch (e) {
-      console.error("Failed to parse LLM response:", parseResponse.content);
+      console.error("Failed to parse LLM response:", parseResponseText.substring(0, 500));
       return NextResponse.json({ error: "试卷解析失败" }, { status: 400 });
     }
 
@@ -98,20 +112,23 @@ ${JSON.stringify(answers, null, 2)}
 3. 对于填空题和简答题，判断关键词是否匹配
 4. 只返回JSON，不要有其他内容`;
 
-    const gradeResponse = await client.invoke([
+    // 使用流式输出获取完整响应
+    const gradeStream = client.stream([
       { role: "user", content: gradePrompt }
     ], { temperature: 0.3 });
+
+    const gradeResponseText = await collectStreamResponse(gradeStream);
 
     // 解析批改结果
     let gradeResult;
     try {
-      let content = gradeResponse.content.trim();
+      let content = gradeResponseText.trim();
       if (content.startsWith("```")) {
         content = content.replace(/```json\n?/g, "").replace(/```\n?/g, "");
       }
       gradeResult = JSON.parse(content);
     } catch (e) {
-      console.error("Failed to parse grade response:", gradeResponse.content);
+      console.error("Failed to parse grade response:", gradeResponseText.substring(0, 500));
       return NextResponse.json({ error: "批改失败" }, { status: 500 });
     }
 
