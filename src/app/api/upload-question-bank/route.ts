@@ -18,12 +18,12 @@ function tryParseJSON(content: string): any {
   
   if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
     jsonStr = jsonStr.substring(startIndex, endIndex + 1);
-  } else if (startIndex !== -1 && endIndex === -1) {
-    // 如果找到了 [ 但没有找到 ]，尝试补全
-    console.log("JSON missing closing bracket, attempting to fix...");
+  } else if (startIndex !== -1) {
+    // 如果找到了 [ 但没有找到 ]，说明 JSON 被截断了
+    console.log("JSON missing closing bracket, attempting to extract complete objects...");
     jsonStr = jsonStr.substring(startIndex);
     
-    // 移除最后一个可能的逗号和不完整的对象
+    // 移除最后一个不完整的对象（没有闭合的）
     let lastValidEnd = jsonStr.lastIndexOf("},");
     if (lastValidEnd !== -1) {
       jsonStr = jsonStr.substring(0, lastValidEnd + 1) + "]";
@@ -41,7 +41,7 @@ function tryParseJSON(content: string): any {
     return JSON.parse(jsonStr);
   } catch (e) {
     // 如果仍然失败，尝试逐个对象解析
-    console.log("Direct parse failed, trying to extract objects...");
+    console.log("Direct parse failed, trying to extract objects individually...");
     
     const objects: any[] = [];
     // 使用更简单的方式提取对象
@@ -103,78 +103,95 @@ export async function POST(request: NextRequest) {
     const result = await mammoth.extractRawText({ buffer });
     const text = result.value;
 
+    // 按行分割题目，估算题目数量
+    const lines = text.split('\n').filter(line => line.trim());
+    const estimatedQuestionCount = lines.filter(line => 
+      /^\d+[.、．]/.test(line.trim()) || 
+      line.includes('答案') || 
+      line.includes('正确答案')
+    ).length;
+    
+    console.log(`Document has ${lines.length} lines, estimated ${estimatedQuestionCount} questions`);
+
     // 使用 LLM 解析题目和答案
     const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
     const config = new Config();
     const client = new LLMClient(config, customHeaders);
 
-    const prompt = `请从以下题库文档中提取所有题目和答案，按照JSON格式返回。格式要求：
-[
-  {
-    "question": "题目内容",
-    "answer": "答案内容",
-    "type": "题型（单选/多选/判断/填空/简答）",
-    "difficulty": 难度等级(1-简单/2-中等/3-困难),
-    "options": ["选项A", "选项B", "选项C", "选项D"],
-    "explanation": "解析说明（如果有）"
-  }
-]
+    // 分批处理，每批处理约30道题
+    const BATCH_SIZE = 30;
+    const allQuestions: any[] = [];
+    
+    // 将文本按题目分割
+    const questionPattern = /(?=\d+[.、．])/g;
+    const questionBlocks = text.split(questionPattern).filter(block => block.trim());
+    
+    console.log(`Found ${questionBlocks.length} question blocks`);
+    
+    // 分批处理
+    for (let i = 0; i < questionBlocks.length; i += BATCH_SIZE) {
+      const batch = questionBlocks.slice(i, i + BATCH_SIZE);
+      const batchText = batch.join('\n\n');
+      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(questionBlocks.length / BATCH_SIZE);
+      
+      console.log(`Processing batch ${batchNum}/${totalBatches} with ${batch.length} questions`);
 
-重要提示：
-1. 根据题目内容判断题型，选择题需要提取选项
-2. 根据题目复杂度判断难度等级
-3. 只返回JSON数组，不要有任何其他文字说明
-4. 确保JSON格式正确，每个对象之间用逗号分隔，最后一个对象后面不要有逗号
-5. 数组必须用]闭合
+      const prompt = `请从以下题库中提取题目和答案，返回紧凑的JSON数组格式（不要换行和缩进，节省token）。
+格式：[{"q":"题目","a":"答案","t":"单选/多选/判断/填空/简答","d":1-3,"o":["选项1","选项2"]}]
 
-题库文档内容：
-${text}`;
+规则：
+- t是题型，d是难度(1简单2中等3困难)，o是选项数组(非选择题为null)
+- 只返回JSON，不要任何其他文字
 
-    // 使用流式输出获取完整响应
-    const stream = client.stream([
-      { role: "user", content: prompt }
-    ], { temperature: 0.3 });
+题库内容：
+${batchText}`;
 
-    // 收集完整响应
-    let fullContent = "";
-    for await (const chunk of stream) {
-      if (chunk.content) {
-        fullContent += chunk.content.toString();
+      // 使用流式输出获取完整响应
+      const stream = client.stream([
+        { role: "user", content: prompt }
+      ], { temperature: 0.3, model: "doubao-seed-1-6-flash-250615" }); // 使用快速模型
+
+      // 收集完整响应
+      let fullContent = "";
+      for await (const chunk of stream) {
+        if (chunk.content) {
+          fullContent += chunk.content.toString();
+        }
+      }
+
+      // 解析 JSON
+      try {
+        let batchQuestions = tryParseJSON(fullContent);
+        if (Array.isArray(batchQuestions)) {
+          // 转换为完整格式
+          batchQuestions = batchQuestions.map((q: any) => ({
+            question: q.q || q.question || "",
+            answer: q.a || q.answer || "",
+            type: q.t || q.type || "简答",
+            difficulty: q.d || q.difficulty || 1,
+            options: q.o || q.options || null,
+            explanation: q.e || q.explanation || null,
+          }));
+          allQuestions.push(...batchQuestions);
+          console.log(`Batch ${batchNum} parsed ${batchQuestions.length} questions, total: ${allQuestions.length}`);
+        }
+      } catch (e) {
+        console.error(`Batch ${batchNum} parse error:`, e);
+        // 继续处理下一批
       }
     }
 
-    console.log("LLM response length:", fullContent.length);
-    console.log("LLM response start (300 chars):", fullContent.substring(0, 300));
-    console.log("LLM response end (300 chars):", fullContent.substring(Math.max(0, fullContent.length - 300)));
-
-    // 解析 LLM 返回的 JSON
-    let questions;
-    try {
-      questions = tryParseJSON(fullContent);
-    } catch (e) {
-      console.error("JSON parse error:", e);
-      return NextResponse.json({ 
-        error: "题库解析失败，LLM响应格式不正确，请重试", 
-        details: String(e),
-        contentLength: fullContent.length,
-        contentStart: fullContent.substring(0, 300),
-        contentEnd: fullContent.substring(Math.max(0, fullContent.length - 300))
-      }, { status: 400 });
-    }
+    console.log(`Total parsed questions: ${allQuestions.length}`);
 
     // 验证并清理数据
-    if (!Array.isArray(questions) || questions.length === 0) {
-      return NextResponse.json({ 
-        error: "未能从文档中提取到题目",
-        contentLength: fullContent.length 
-      }, { status: 400 });
+    if (allQuestions.length === 0) {
+      return NextResponse.json({ error: "未能从文档中提取到题目，请检查文档格式" }, { status: 400 });
     }
-
-    console.log("Successfully parsed", questions.length, "questions");
 
     // 存储到数据库
     const supabase = getSupabaseClient();
-    const questionsToInsert = questions.map(q => ({
+    const questionsToInsert = allQuestions.map(q => ({
       question: q.question || "",
       answer: q.answer || "",
       type: q.type || "简答",
@@ -196,8 +213,8 @@ ${text}`;
 
     return NextResponse.json({
       success: true,
-      count: data?.length || questions.length,
-      message: `成功上传并解析 ${data?.length || questions.length} 道题目`,
+      count: data?.length || allQuestions.length,
+      message: `成功上传并解析 ${data?.length || allQuestions.length} 道题目`,
     });
   } catch (error) {
     console.error("Upload error:", error);

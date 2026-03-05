@@ -15,6 +15,28 @@ interface TypeConfig {
   count: number;
 }
 
+interface QuestionData {
+  id: number;
+  question: string;
+  type: string;
+  difficulty: number;
+  options?: string[] | null;
+  answer?: string;
+  explanation?: string | null;
+}
+
+// 随机打乱数组
+function shuffleArray<T>(array: T[]): T[] {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const temp = shuffled[i];
+    shuffled[i] = shuffled[j];
+    shuffled[j] = temp;
+  }
+  return shuffled;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -31,8 +53,8 @@ export async function POST(request: NextRequest) {
     const supabase = getSupabaseClient();
 
     // 获取所有选中的题型
-    const selectedTypes = typeConfigs.map(t => t.type);
-    
+    const selectedTypes = typeConfigs.map((t) => t.type);
+
     // 构建查询条件
     let query = supabase
       .from("question_bank")
@@ -51,25 +73,25 @@ export async function POST(request: NextRequest) {
     }
 
     // 按题型选择题目
-    let selectedQuestions: typeof questions = [];
+    const selectedQuestions: QuestionData[] = [];
 
     for (const typeConfig of typeConfigs) {
       // 筛选该题型的所有题目
-      let typeQuestions = questions.filter((q: { type: string }) => q.type === typeConfig.type);
+      let typeQuestions = questions.filter((q: QuestionData) => q.type === typeConfig.type);
 
       // 如果是混合难度，按比例分配
       if (difficulty === "mixed" && typeQuestions.length > 0) {
-        const easy = typeQuestions.filter((q: { difficulty: number }) => q.difficulty === 1);
-        const medium = typeQuestions.filter((q: { difficulty: number }) => q.difficulty === 2);
-        const hard = typeQuestions.filter((q: { difficulty: number }) => q.difficulty === 3);
+        const easy = typeQuestions.filter((q: QuestionData) => q.difficulty === 1);
+        const medium = typeQuestions.filter((q: QuestionData) => q.difficulty === 2);
+        const hard = typeQuestions.filter((q: QuestionData) => q.difficulty === 3);
 
         const count = typeConfig.count;
         const easyCount = Math.ceil(count * 0.3);
         const mediumCount = Math.ceil(count * 0.5);
         const hardCount = Math.max(0, count - easyCount - mediumCount);
 
-        const selected: typeof questions = [];
-        
+        const selected: QuestionData[] = [];
+
         // 添加简单题
         selected.push(...shuffleArray(easy).slice(0, easyCount));
         // 添加中等题
@@ -79,9 +101,8 @@ export async function POST(request: NextRequest) {
 
         // 如果数量不够，从该题型所有题目中随机补充
         if (selected.length < count) {
-          const remaining = typeQuestions.filter(
-            (q: { id: number }) => !selected.find(s => s.id === q.id)
-          );
+          const selectedIds = new Set(selected.map((q) => q.id));
+          const remaining = typeQuestions.filter((q: QuestionData) => !selectedIds.has(q.id));
           selected.push(...shuffleArray(remaining).slice(0, count - selected.length));
         }
 
@@ -101,14 +122,14 @@ export async function POST(request: NextRequest) {
     // 检查是否有题型数量不足
     const insufficientTypes: string[] = [];
     for (const typeConfig of typeConfigs) {
-      const actualCount = selectedQuestions.filter((q: { type: string }) => q.type === typeConfig.type).length;
+      const actualCount = selectedQuestions.filter((q: QuestionData) => q.type === typeConfig.type).length;
       if (actualCount < typeConfig.count) {
         insufficientTypes.push(`${typeConfig.type}题(需${typeConfig.count}题，仅有${actualCount}题)`);
       }
     }
 
     // 生成 Word 文档
-    const doc = await generateExamDocument(title, selectedQuestions);
+    const doc = generateExamDocument(title, selectedQuestions);
     const buffer = await Packer.toBuffer(doc);
 
     // 上传到对象存储
@@ -122,14 +143,14 @@ export async function POST(request: NextRequest) {
     // 生成下载链接
     const downloadUrl = await storage.generatePresignedUrl({
       key: fileKey,
-      expireTime: 3600, // 1小时有效
+      expireTime: 3600,
     });
 
     // 保存试卷记录到数据库
     await supabase.from("exam_paper").insert({
       title,
       content: {
-        questions: selectedQuestions.map((q: { id: number; question: string; type: string; difficulty: number; options?: string[] }) => ({
+        questions: selectedQuestions.map((q: QuestionData) => ({
           id: q.id,
           question: q.question,
           type: q.type,
@@ -144,7 +165,7 @@ export async function POST(request: NextRequest) {
       success: true,
       downloadUrl,
       count: selectedQuestions.length,
-      warning: insufficientTypes.length > 0 ? `部分题型数量不足：${insufficientTypes.join('、')}` : undefined,
+      warning: insufficientTypes.length > 0 ? `部分题型数量不足：${insufficientTypes.join("、")}` : undefined,
     });
   } catch (error) {
     console.error("Generate exam error:", error);
@@ -155,18 +176,8 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// 随机打乱数组
-function shuffleArray<T>(array: T[]): T[] {
-  const shuffled = [...array];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled;
-}
-
 // 生成试卷文档
-async function generateExamDocument(title: string, questions: any[]) {
+function generateExamDocument(title: string, questions: QuestionData[]): Document {
   const sections: Paragraph[] = [];
 
   // 标题
@@ -204,7 +215,7 @@ async function generateExamDocument(title: string, questions: any[]) {
   );
 
   // 按题型分组
-  const groupedQuestions: { [key: string]: typeof questions } = {};
+  const groupedQuestions: Record<string, QuestionData[]> = {};
   questions.forEach((q) => {
     if (!groupedQuestions[q.type]) {
       groupedQuestions[q.type] = [];
@@ -247,7 +258,7 @@ async function generateExamDocument(title: string, questions: any[]) {
 
       // 选项（如果有）
       if (q.options && q.options.length > 0) {
-        q.options.forEach((option: string, index: number) => {
+        q.options.forEach((option, index) => {
           const letter = String.fromCharCode(65 + index);
           sections.push(
             new Paragraph({
@@ -282,13 +293,11 @@ async function generateExamDocument(title: string, questions: any[]) {
   });
 
   // 创建文档
-  const doc = new Document({
+  return new Document({
     sections: [
       {
         children: sections,
       },
     ],
   });
-
-  return doc;
 }
