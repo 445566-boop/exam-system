@@ -17,16 +17,31 @@ interface QuestionStats {
   difficulties: { [key: number]: number };
 }
 
+interface TypeConfig {
+  id: string;
+  label: string;
+  selected: boolean;
+  count: number;
+}
+
 export default function GenerateExam() {
   const [title, setTitle] = useState("");
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [questionCount, setQuestionCount] = useState(10);
   const [difficulty, setDifficulty] = useState("all");
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [stats, setStats] = useState<QuestionStats | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+
+  // 每种题型的配置（是否选择、数量）
+  const [typeConfigs, setTypeConfigs] = useState<TypeConfig[]>([
+    { id: "单选", label: "单选题", selected: false, count: 5 },
+    { id: "多选", label: "多选题", selected: false, count: 5 },
+    { id: "判断", label: "判断题", selected: false, count: 5 },
+    { id: "填空", label: "填空题", selected: false, count: 5 },
+    { id: "简答", label: "简答题", selected: false, count: 3 },
+  ]);
 
   // 获取题库统计信息
   useEffect(() => {
@@ -45,14 +60,6 @@ export default function GenerateExam() {
     }
   };
 
-  const questionTypes = [
-    { id: "单选", label: "单选题" },
-    { id: "多选", label: "多选题" },
-    { id: "判断", label: "判断题" },
-    { id: "填空", label: "填空题" },
-    { id: "简答", label: "简答题" },
-  ];
-
   const difficultyOptions = [
     { value: "all", label: "全部难度" },
     { value: "1", label: "简单" },
@@ -61,12 +68,32 @@ export default function GenerateExam() {
     { value: "mixed", label: "混合（简单:中等:困难 = 3:5:2）" },
   ];
 
-  const handleTypeChange = (type: string, checked: boolean) => {
-    if (checked) {
-      setSelectedTypes([...selectedTypes, type]);
-    } else {
-      setSelectedTypes(selectedTypes.filter(t => t !== type));
-    }
+  // 切换题型选择状态
+  const handleTypeToggle = (typeId: string, checked: boolean) => {
+    setTypeConfigs(prev => 
+      prev.map(config => 
+        config.id === typeId ? { ...config, selected: checked } : config
+      )
+    );
+  };
+
+  // 修改题型数量
+  const handleCountChange = (typeId: string, count: number) => {
+    setTypeConfigs(prev => 
+      prev.map(config => 
+        config.id === typeId ? { ...config, count: Math.max(1, count) } : config
+      )
+    );
+  };
+
+  // 计算总题目数
+  const totalCount = typeConfigs
+    .filter(c => c.selected)
+    .reduce((sum, c) => sum + c.count, 0);
+
+  // 获取选中的题型配置
+  const getSelectedTypes = () => {
+    return typeConfigs.filter(c => c.selected);
   };
 
   const handleGenerate = async () => {
@@ -74,6 +101,8 @@ export default function GenerateExam() {
       setError("请输入试卷标题");
       return;
     }
+    
+    const selectedTypes = getSelectedTypes();
     if (selectedTypes.length === 0) {
       setError("请至少选择一种题型");
       return;
@@ -82,6 +111,7 @@ export default function GenerateExam() {
     setGenerating(true);
     setError(null);
     setDownloadUrl(null);
+    setWarning(null);
 
     try {
       const response = await fetch('/api/generate-exam', {
@@ -91,8 +121,10 @@ export default function GenerateExam() {
         },
         body: JSON.stringify({
           title,
-          types: selectedTypes,
-          count: questionCount,
+          typeConfigs: selectedTypes.map(t => ({
+            type: t.id,
+            count: t.count,
+          })),
           difficulty,
         }),
       });
@@ -101,6 +133,9 @@ export default function GenerateExam() {
 
       if (response.ok) {
         setDownloadUrl(data.downloadUrl);
+        if (data.warning) {
+          setWarning(data.warning);
+        }
       } else {
         setError(data.error || '生成失败，请重试');
       }
@@ -178,7 +213,7 @@ export default function GenerateExam() {
             生成试卷配置
           </CardTitle>
           <CardDescription>
-            选择题目类型、数量和难度，系统将随机生成试卷
+            选择题目类型并设置每种题型的数量，系统将随机生成试卷
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -193,40 +228,69 @@ export default function GenerateExam() {
             />
           </div>
 
-          {/* 题型选择 */}
+          {/* 题型选择与数量设置 */}
           <div className="space-y-2">
-            <Label>题目类型</Label>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              {questionTypes.map((type) => (
-                <div key={type.id} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={type.id}
-                    checked={selectedTypes.includes(type.id)}
-                    onCheckedChange={(checked) => handleTypeChange(type.id, checked as boolean)}
-                  />
-                  <label
-                    htmlFor={type.id}
-                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+            <Label>题目类型与数量</Label>
+            <div className="border rounded-lg divide-y">
+              {typeConfigs.map((typeConfig) => {
+                const availableCount = stats?.types[typeConfig.id] || 0;
+                const isOverLimit = typeConfig.selected && typeConfig.count > availableCount;
+                
+                return (
+                  <div 
+                    key={typeConfig.id} 
+                    className={`flex items-center justify-between p-4 ${
+                      typeConfig.selected ? 'bg-blue-50/50 dark:bg-blue-950/20' : ''
+                    }`}
                   >
-                    {type.label}
-                  </label>
-                </div>
-              ))}
+                    <div className="flex items-center gap-3">
+                      <Checkbox
+                        id={typeConfig.id}
+                        checked={typeConfig.selected}
+                        onCheckedChange={(checked) => handleTypeToggle(typeConfig.id, checked as boolean)}
+                        disabled={availableCount === 0}
+                      />
+                      <label
+                        htmlFor={typeConfig.id}
+                        className={`text-sm font-medium leading-none ${
+                          availableCount === 0 ? 'text-slate-400 cursor-not-allowed' : 'cursor-pointer'
+                        }`}
+                      >
+                        {typeConfig.label}
+                      </label>
+                      <Badge variant="outline" className="text-xs">
+                        题库: {availableCount}题
+                      </Badge>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <Label className="text-sm text-slate-500">数量:</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        max={availableCount}
+                        value={typeConfig.count}
+                        onChange={(e) => handleCountChange(typeConfig.id, parseInt(e.target.value) || 1)}
+                        disabled={!typeConfig.selected || availableCount === 0}
+                        className={`w-20 ${isOverLimit ? 'border-red-500' : ''}`}
+                      />
+                      {isOverLimit && (
+                        <span className="text-xs text-red-500">
+                          超出可用数量
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          </div>
-
-          {/* 题目数量 */}
-          <div className="space-y-2">
-            <Label htmlFor="count">题目数量</Label>
-            <Input
-              id="count"
-              type="number"
-              min="1"
-              max="100"
-              value={questionCount}
-              onChange={(e) => setQuestionCount(parseInt(e.target.value) || 1)}
-              className="w-32"
-            />
+            
+            {/* 总题数显示 */}
+            <div className="flex justify-end mt-2">
+              <Badge variant="secondary" className="text-sm">
+                总计: {totalCount} 题
+              </Badge>
+            </div>
           </div>
 
           {/* 难度选择 */}
@@ -254,11 +318,21 @@ export default function GenerateExam() {
             </Alert>
           )}
 
+          {/* 警告提示 */}
+          {warning && (
+            <Alert className="bg-yellow-50 border-yellow-200 dark:bg-yellow-950/20 dark:border-yellow-800">
+              <AlertCircle className="h-4 w-4 text-yellow-600" />
+              <AlertDescription className="text-yellow-800 dark:text-yellow-400">
+                {warning}
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* 操作按钮 */}
           <div className="flex gap-4">
             <Button
               onClick={handleGenerate}
-              disabled={generating || !stats || stats.total === 0}
+              disabled={generating || !stats || stats.total === 0 || totalCount === 0}
               size="lg"
             >
               {generating ? (

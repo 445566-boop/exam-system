@@ -10,22 +10,34 @@ import {
   Packer,
 } from "docx";
 
+interface TypeConfig {
+  type: string;
+  count: number;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { title, types, count, difficulty } = body;
+    const { title, typeConfigs, difficulty } = body as {
+      title: string;
+      typeConfigs: TypeConfig[];
+      difficulty: string;
+    };
 
-    if (!title || !types || types.length === 0 || !count) {
+    if (!title || !typeConfigs || typeConfigs.length === 0) {
       return NextResponse.json({ error: "参数不完整" }, { status: 400 });
     }
 
     const supabase = getSupabaseClient();
 
+    // 获取所有选中的题型
+    const selectedTypes = typeConfigs.map(t => t.type);
+    
     // 构建查询条件
     let query = supabase
       .from("question_bank")
       .select("*")
-      .in("type", types);
+      .in("type", selectedTypes);
 
     // 难度筛选
     if (difficulty !== "all" && difficulty !== "mixed") {
@@ -38,31 +50,61 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "题库中没有符合条件的题目" }, { status: 400 });
     }
 
-    // 根据难度选择题目
+    // 按题型选择题目
     let selectedQuestions: typeof questions = [];
-    
-    if (difficulty === "mixed") {
-      // 混合难度：简单30%，中等50%，困难20%
-      const easy = questions.filter((q: { difficulty: number }) => q.difficulty === 1);
-      const medium = questions.filter((q: { difficulty: number }) => q.difficulty === 2);
-      const hard = questions.filter((q: { difficulty: number }) => q.difficulty === 3);
 
-      const easyCount = Math.ceil(count * 0.3);
-      const mediumCount = Math.ceil(count * 0.5);
-      const hardCount = count - easyCount - mediumCount;
+    for (const typeConfig of typeConfigs) {
+      // 筛选该题型的所有题目
+      let typeQuestions = questions.filter((q: { type: string }) => q.type === typeConfig.type);
 
-      selectedQuestions = [
-        ...shuffleArray(easy).slice(0, easyCount),
-        ...shuffleArray(medium).slice(0, mediumCount),
-        ...shuffleArray(hard).slice(0, hardCount),
-      ];
-    } else {
-      // 随机选择题目
-      selectedQuestions = shuffleArray(questions).slice(0, count);
+      // 如果是混合难度，按比例分配
+      if (difficulty === "mixed" && typeQuestions.length > 0) {
+        const easy = typeQuestions.filter((q: { difficulty: number }) => q.difficulty === 1);
+        const medium = typeQuestions.filter((q: { difficulty: number }) => q.difficulty === 2);
+        const hard = typeQuestions.filter((q: { difficulty: number }) => q.difficulty === 3);
+
+        const count = typeConfig.count;
+        const easyCount = Math.ceil(count * 0.3);
+        const mediumCount = Math.ceil(count * 0.5);
+        const hardCount = Math.max(0, count - easyCount - mediumCount);
+
+        const selected: typeof questions = [];
+        
+        // 添加简单题
+        selected.push(...shuffleArray(easy).slice(0, easyCount));
+        // 添加中等题
+        selected.push(...shuffleArray(medium).slice(0, mediumCount));
+        // 添加困难题
+        selected.push(...shuffleArray(hard).slice(0, hardCount));
+
+        // 如果数量不够，从该题型所有题目中随机补充
+        if (selected.length < count) {
+          const remaining = typeQuestions.filter(
+            (q: { id: number }) => !selected.find(s => s.id === q.id)
+          );
+          selected.push(...shuffleArray(remaining).slice(0, count - selected.length));
+        }
+
+        typeQuestions = selected.slice(0, count);
+      } else {
+        // 随机选择指定数量的题目
+        typeQuestions = shuffleArray(typeQuestions).slice(0, typeConfig.count);
+      }
+
+      selectedQuestions.push(...typeQuestions);
     }
 
     if (selectedQuestions.length === 0) {
       return NextResponse.json({ error: "无法选择足够的题目" }, { status: 400 });
+    }
+
+    // 检查是否有题型数量不足
+    const insufficientTypes: string[] = [];
+    for (const typeConfig of typeConfigs) {
+      const actualCount = selectedQuestions.filter((q: { type: string }) => q.type === typeConfig.type).length;
+      if (actualCount < typeConfig.count) {
+        insufficientTypes.push(`${typeConfig.type}题(需${typeConfig.count}题，仅有${actualCount}题)`);
+      }
     }
 
     // 生成 Word 文档
@@ -95,13 +137,14 @@ export async function POST(request: NextRequest) {
           options: q.options,
         })),
       },
-      config: { types, count, difficulty },
+      config: { typeConfigs, difficulty },
     });
 
     return NextResponse.json({
       success: true,
       downloadUrl,
       count: selectedQuestions.length,
+      warning: insufficientTypes.length > 0 ? `部分题型数量不足：${insufficientTypes.join('、')}` : undefined,
     });
   } catch (error) {
     console.error("Generate exam error:", error);
