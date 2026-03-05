@@ -4,6 +4,28 @@ import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 import { getSupabaseClient } from "@/storage/database/supabase-client";
 import { S3Storage } from "coze-coding-dev-sdk";
 
+// 统一题型名称映射
+const TYPE_MAPPINGS: Record<string, string> = {
+  "单选题": "单选",
+  "多选题": "多选",
+  "判断题": "判断",
+  "填空题": "填空",
+  "简答题": "简答",
+};
+
+// 规范化题型名称
+function normalizeType(type: string): string {
+  const trimmed = type.trim();
+  return TYPE_MAPPINGS[trimmed] || trimmed;
+}
+
+// 规范化难度值（限制在1-3范围）
+function normalizeDifficulty(difficulty: number): number {
+  if (difficulty < 1) return 1;
+  if (difficulty > 3) return Math.min(3, Math.ceil(difficulty / 3));
+  return Math.round(difficulty);
+}
+
 // 尝试修复和解析 JSON
 function tryParseJSON(content: string): any {
   // 移除 markdown 代码块标记
@@ -164,12 +186,12 @@ ${batchText}`;
       try {
         let batchQuestions = tryParseJSON(fullContent);
         if (Array.isArray(batchQuestions)) {
-          // 转换为完整格式
+          // 转换为完整格式并规范化
           batchQuestions = batchQuestions.map((q: any) => ({
             question: q.q || q.question || "",
             answer: q.a || q.answer || "",
-            type: q.t || q.type || "简答",
-            difficulty: q.d || q.difficulty || 1,
+            type: normalizeType(q.t || q.type || "简答"),
+            difficulty: normalizeDifficulty(q.d || q.difficulty || 1),
             options: q.o || q.options || null,
             explanation: q.e || q.explanation || null,
           }));
@@ -194,8 +216,8 @@ ${batchText}`;
     const questionsToInsert = allQuestions.map(q => ({
       question: q.question || "",
       answer: q.answer || "",
-      type: q.type || "简答",
-      difficulty: q.difficulty || 1,
+      type: normalizeType(q.type || "简答"),
+      difficulty: normalizeDifficulty(q.difficulty || 1),
       options: q.options || null,
       explanation: q.explanation || null,
       file_key: fileKey,
