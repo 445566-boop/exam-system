@@ -18,7 +18,7 @@ export default function Home() {
       <header className="border-b bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
         <div className="container mx-auto px-4 py-6">
           <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
-            智能试卷管理系统
+            智能试卷管理系统——22050815陆铮杰
           </h1>
           <p className="text-slate-600 dark:text-slate-400 mt-2">
             上传题库、生成试卷、自动批改、错题管理一站式解决
