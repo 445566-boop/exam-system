@@ -305,10 +305,16 @@ export default function GenerateExam() {
               {/* 难度分布 - 饼图 */}
               <div className="border rounded-lg p-4">
                 <p className="text-sm font-medium text-slate-700 mb-3">难度分布</p>
-                <div className="flex gap-2 mb-3">
-                  <Badge style={{ backgroundColor: '#10b981' }}>简单: {getCurrentStats().difficulties["1"] || 0}</Badge>
-                  <Badge style={{ backgroundColor: '#f59e0b' }}>中等: {getCurrentStats().difficulties["2"] || 0}</Badge>
-                  <Badge style={{ backgroundColor: '#ef4444' }}>困难: {getCurrentStats().difficulties["3"] || 0}</Badge>
+                <div className="flex gap-2 mb-3 flex-wrap">
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white" style={{ backgroundColor: '#10b981' }}>
+                    简单: {getCurrentStats().difficulties["1"] || 0}
+                  </span>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white" style={{ backgroundColor: '#f59e0b' }}>
+                    中等: {getCurrentStats().difficulties["2"] || 0}
+                  </span>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white" style={{ backgroundColor: '#ef4444' }}>
+                    困难: {getCurrentStats().difficulties["3"] || 0}
+                  </span>
                 </div>
                 <div className="h-48">
                   <ResponsiveContainer width="100%" height="100%">
