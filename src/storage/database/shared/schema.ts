@@ -59,6 +59,8 @@ export const wrongQuestion = pgTable("wrong_question", {
 	difficulty: integer("difficulty").notNull(),
 	options: jsonb("options").$type<string[]>(),
 	explanation: text("explanation"),
+	subject: text("subject"),
+	count: integer("count").default(1),
 	created_at: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow(),
 });
 

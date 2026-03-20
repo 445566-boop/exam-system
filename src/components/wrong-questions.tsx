@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BookX, Download, Loader2, Trash2, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
@@ -17,27 +18,38 @@ interface WrongQuestion {
   difficulty: number;
   options?: string[];
   explanation?: string;
+  subject?: string;
   count?: number;
   created_at: string;
 }
 
 export default function WrongQuestions() {
   const [questions, setQuestions] = useState<WrongQuestion[]>([]);
+  const [subjects, setSubjects] = useState<{ [key: string]: number }>({});
+  const [selectedSubject, setSelectedSubject] = useState<string>("全部");
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchWrongQuestions();
-  }, []);
+  }, [selectedSubject]);
 
   const fetchWrongQuestions = async () => {
     setLoading(true);
+    setError(null);
     try {
-      const response = await fetch('/api/wrong-questions');
+      const url = selectedSubject !== "全部" 
+        ? `/api/wrong-questions?subject=${encodeURIComponent(selectedSubject)}`
+        : '/api/wrong-questions';
+      const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
         setQuestions(data.questions || []);
+        // 首次加载时设置学科列表
+        if (selectedSubject === "全部" && data.subjects) {
+          setSubjects(data.subjects);
+        }
       } else {
         setError('获取错题集失败');
       }
@@ -46,6 +58,11 @@ export default function WrongQuestions() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // 学科变更时重新获取数据
+  const handleSubjectChange = (value: string) => {
+    setSelectedSubject(value);
   };
 
   const handleDownload = async () => {
@@ -83,6 +100,7 @@ export default function WrongQuestions() {
       });
       if (response.ok) {
         setQuestions(questions.filter(q => q.id !== id));
+        fetchWrongQuestions(); // 重新获取以更新统计
       }
     } catch (err) {
       setError('删除失败');
@@ -90,14 +108,21 @@ export default function WrongQuestions() {
   };
 
   const handleClearAll = async () => {
-    if (!confirm('确定要清空所有错题吗？')) return;
+    const confirmMsg = selectedSubject !== "全部" 
+      ? `确定要清空"${selectedSubject}"学科的所有错题吗？`
+      : '确定要清空所有错题吗？';
+    if (!confirm(confirmMsg)) return;
     
     try {
-      const response = await fetch('/api/wrong-questions', {
+      const url = selectedSubject !== "全部"
+        ? `/api/wrong-questions?subject=${encodeURIComponent(selectedSubject)}`
+        : '/api/wrong-questions';
+      const response = await fetch(url, {
         method: 'DELETE',
       });
       if (response.ok) {
         setQuestions([]);
+        fetchWrongQuestions(); // 重新获取以更新统计
       }
     } catch (err) {
       setError('清空失败');
@@ -131,15 +156,36 @@ export default function WrongQuestions() {
       {/* 操作栏 */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <BookX className="h-5 w-5" />
-                错题集
-              </CardTitle>
-              <CardDescription>
-                共 {questions.length} 道错题
-              </CardDescription>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center gap-4">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <BookX className="h-5 w-5" />
+                  错题集
+                </CardTitle>
+                <CardDescription>
+                  共 {questions.length} 道错题
+                </CardDescription>
+              </div>
+              {/* 学科筛选 */}
+              {Object.keys(subjects).length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-slate-500">学科:</span>
+                  <Select value={selectedSubject} onValueChange={handleSubjectChange}>
+                    <SelectTrigger className="w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="全部">全部</SelectItem>
+                      {Object.entries(subjects).map(([subject, count]) => (
+                        <SelectItem key={subject} value={subject}>
+                          {subject} ({count})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
             <div className="flex gap-2">
               <Button
@@ -157,7 +203,7 @@ export default function WrongQuestions() {
                 disabled={questions.length === 0}
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                清空
+                {selectedSubject !== "全部" ? "清空当前学科" : "清空"}
               </Button>
               <Button
                 size="sm"
@@ -208,7 +254,12 @@ export default function WrongQuestions() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 space-y-3">
                     {/* 标签 */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {question.subject && (
+                        <Badge variant="secondary" className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                          {question.subject}
+                        </Badge>
+                      )}
                       <Badge variant="outline">{question.type}</Badge>
                       <Badge className={getDifficultyColor(question.difficulty)}>
                         {getDifficultyLabel(question.difficulty)}

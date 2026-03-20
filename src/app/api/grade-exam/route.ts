@@ -146,6 +146,7 @@ ${JSON.stringify(answers, null, 2)}
           difficulty: originalQuestion?.difficulty || 1,
           options: originalQuestion?.options || null,
           explanation: originalQuestion?.explanation || null,
+          subject: originalQuestion?.subject || null,
         };
       });
 
