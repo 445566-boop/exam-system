@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { FileText, Loader2, Download, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
 
 interface QuestionStats {
   total: number;
@@ -91,6 +92,33 @@ export default function GenerateExam() {
     }
     
     return { total: 0, types: {} as { [key: string]: number }, difficulties: {} as { [key: string]: number } };
+  };
+
+  // 图表颜色配置
+  const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+
+  // 获取题型分布柱状图数据
+  const getTypeChartData = () => {
+    const currentStats = getCurrentStats();
+    return Object.entries(currentStats.types).map(([type, count]) => ({
+      name: type,
+      count: count,
+    }));
+  };
+
+  // 获取难度分布饼图数据
+  const getDifficultyChartData = () => {
+    const currentStats = getCurrentStats();
+    const difficultyLabels: { [key: string]: string } = {
+      "1": "简单",
+      "2": "中等",
+      "3": "困难"
+    };
+    return [
+      { name: "简单", value: currentStats.difficulties["1"] || 0, color: '#10b981' },
+      { name: "中等", value: currentStats.difficulties["2"] || 0, color: '#f59e0b' },
+      { name: "困难", value: currentStats.difficulties["3"] || 0, color: '#ef4444' },
+    ].filter(item => item.value > 0);
   };
 
   // 获取有题目的学科列表
@@ -236,27 +264,80 @@ export default function GenerateExam() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <div>
-                <p className="text-sm text-slate-500">总题数</p>
-                <p className="text-2xl font-bold">{getCurrentStats().total}</p>
-              </div>
-              <div>
-                <p className="text-sm text-slate-500 mb-2">题型分布</p>
-                <div className="flex flex-wrap gap-1">
+            {/* 总题数 */}
+            <div className="mb-4">
+              <p className="text-sm text-slate-500">总题数</p>
+              <p className="text-2xl font-bold">{getCurrentStats().total}</p>
+            </div>
+            
+            {/* 图表区域 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* 题型分布 - 柱状图 */}
+              <div className="border rounded-lg p-4">
+                <p className="text-sm font-medium text-slate-700 mb-3">题型分布</p>
+                <div className="flex flex-wrap gap-1 mb-3">
                   {Object.entries(getCurrentStats().types).map(([type, count]) => (
                     <Badge key={type} variant="secondary">
                       {type}: {count}
                     </Badge>
                   ))}
                 </div>
+                <div className="h-48">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={getTypeChartData()} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="name" tick={{ fontSize: 12 }} stroke="#94a3b8" />
+                      <YAxis tick={{ fontSize: 12 }} stroke="#94a3b8" />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '6px' }}
+                        labelStyle={{ color: '#475569' }}
+                      />
+                      <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]}>
+                        {getTypeChartData().map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
-              <div>
-                <p className="text-sm text-slate-500 mb-2">难度分布</p>
-                <div className="flex gap-2">
-                  <Badge>简单: {getCurrentStats().difficulties["1"] || 0}</Badge>
-                  <Badge>中等: {getCurrentStats().difficulties["2"] || 0}</Badge>
-                  <Badge>困难: {getCurrentStats().difficulties["3"] || 0}</Badge>
+              
+              {/* 难度分布 - 饼图 */}
+              <div className="border rounded-lg p-4">
+                <p className="text-sm font-medium text-slate-700 mb-3">难度分布</p>
+                <div className="flex gap-2 mb-3">
+                  <Badge style={{ backgroundColor: '#10b981' }}>简单: {getCurrentStats().difficulties["1"] || 0}</Badge>
+                  <Badge style={{ backgroundColor: '#f59e0b' }}>中等: {getCurrentStats().difficulties["2"] || 0}</Badge>
+                  <Badge style={{ backgroundColor: '#ef4444' }}>困难: {getCurrentStats().difficulties["3"] || 0}</Badge>
+                </div>
+                <div className="h-48">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={getDifficultyChartData()}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={40}
+                        outerRadius={70}
+                        paddingAngle={2}
+                        dataKey="value"
+                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}
+                      >
+                        {getDifficultyChartData().map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '6px' }}
+                      />
+                      <Legend 
+                        verticalAlign="bottom" 
+                        height={20}
+                        formatter={(value) => <span style={{ color: '#475569', fontSize: '12px' }}>{value}</span>}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
             </div>
