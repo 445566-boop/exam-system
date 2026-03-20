@@ -16,7 +16,13 @@ interface QuestionStats {
   types: { [key: string]: number };
   difficulties: { [key: number]: number };
   subjects: { [key: string]: number };
-  subjectDetails: { [subject: string]: { types: { [key: string]: number }; total: number } };
+  subjectDetails: { 
+    [subject: string]: { 
+      types: { [key: string]: number }; 
+      difficulties: { [key: number]: number };
+      total: number 
+    } 
+  };
 }
 
 interface TypeConfig {
@@ -35,6 +41,7 @@ export default function GenerateExam() {
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [selectedSubject, setSelectedSubject] = useState<string>("全部");
 
   // 每种题型的配置（是否选择、数量）
   const [typeConfigs, setTypeConfigs] = useState<TypeConfig[]>([
@@ -60,6 +67,38 @@ export default function GenerateExam() {
     } catch (err) {
       console.error('Failed to fetch stats:', err);
     }
+  };
+
+  // 获取当前选中学科的统计信息
+  const getCurrentStats = () => {
+    if (!stats) return { total: 0, types: {} as { [key: string]: number }, difficulties: {} as { [key: number]: number } };
+    
+    if (selectedSubject === "全部") {
+      return {
+        total: stats.total,
+        types: stats.types,
+        difficulties: stats.difficulties,
+      };
+    }
+    
+    const subjectDetail = stats.subjectDetails[selectedSubject];
+    if (subjectDetail) {
+      return {
+        total: subjectDetail.total,
+        types: subjectDetail.types,
+        difficulties: subjectDetail.difficulties,
+      };
+    }
+    
+    return { total: 0, types: {} as { [key: string]: number }, difficulties: {} as { [key: number]: number } };
+  };
+
+  // 获取有题目的学科列表
+  const getAvailableSubjects = () => {
+    if (!stats) return [];
+    return Object.entries(stats.subjects)
+      .filter(([_, count]) => count > 0)
+      .map(([subject]) => subject);
   };
 
   const difficultyOptions = [
@@ -176,18 +215,36 @@ export default function GenerateExam() {
       {stats && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">题库统计</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg">题库统计</CardTitle>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-500">学科:</span>
+                <Select value={selectedSubject} onValueChange={setSelectedSubject}>
+                  <SelectTrigger className="w-32">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="全部">全部</SelectItem>
+                    {getAvailableSubjects().map((subject) => (
+                      <SelectItem key={subject} value={subject}>
+                        {subject}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               <div>
                 <p className="text-sm text-slate-500">总题数</p>
-                <p className="text-2xl font-bold">{stats.total}</p>
+                <p className="text-2xl font-bold">{getCurrentStats().total}</p>
               </div>
               <div>
                 <p className="text-sm text-slate-500 mb-2">题型分布</p>
                 <div className="flex flex-wrap gap-1">
-                  {Object.entries(stats.types).map(([type, count]) => (
+                  {Object.entries(getCurrentStats().types).map(([type, count]) => (
                     <Badge key={type} variant="secondary">
                       {type}: {count}
                     </Badge>
@@ -197,46 +254,12 @@ export default function GenerateExam() {
               <div>
                 <p className="text-sm text-slate-500 mb-2">难度分布</p>
                 <div className="flex gap-2">
-                  <Badge>简单: {stats.difficulties[1] || 0}</Badge>
-                  <Badge>中等: {stats.difficulties[2] || 0}</Badge>
-                  <Badge>困难: {stats.difficulties[3] || 0}</Badge>
-                </div>
-              </div>
-              <div>
-                <p className="text-sm text-slate-500 mb-2">学科分布</p>
-                <div className="flex flex-wrap gap-1">
-                  {Object.entries(stats.subjects).map(([subject, count]) => (
-                    <Badge key={subject} variant="outline" className="bg-purple-50 text-purple-700 dark:bg-purple-950/30 dark:text-purple-400">
-                      {subject}: {count}
-                    </Badge>
-                  ))}
+                  <Badge>简单: {getCurrentStats().difficulties[1] || 0}</Badge>
+                  <Badge>中等: {getCurrentStats().difficulties[2] || 0}</Badge>
+                  <Badge>困难: {getCurrentStats().difficulties[3] || 0}</Badge>
                 </div>
               </div>
             </div>
-            
-            {/* 按学科细分统计 */}
-            {Object.keys(stats.subjectDetails).length > 1 && (
-              <div className="mt-4 pt-4 border-t">
-                <p className="text-sm text-slate-500 mb-3">学科细分统计</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {Object.entries(stats.subjectDetails).map(([subject, detail]) => (
-                    <div key={subject} className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-medium text-purple-600 dark:text-purple-400">{subject}</span>
-                        <Badge variant="secondary">共 {detail.total} 题</Badge>
-                      </div>
-                      <div className="flex flex-wrap gap-1 text-xs">
-                        {Object.entries(detail.types).map(([type, count]) => (
-                          <Badge key={type} variant="outline" className="text-xs">
-                            {type}: {count}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </CardContent>
         </Card>
       )}
@@ -269,7 +292,8 @@ export default function GenerateExam() {
             <Label>题目类型与数量</Label>
             <div className="border rounded-lg divide-y">
               {typeConfigs.map((typeConfig) => {
-                const availableCount = stats?.types[typeConfig.id] || 0;
+                const currentStats = getCurrentStats();
+                const availableCount = currentStats.types[typeConfig.id] || 0;
                 const isOverLimit = typeConfig.selected && typeConfig.count > availableCount;
                 
                 return (

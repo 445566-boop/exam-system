@@ -22,7 +22,13 @@ export async function GET(request: NextRequest) {
       difficulties: {} as { [key: number]: number },
       subjects: {} as { [key: string]: number },
       // 按学科细分统计
-      subjectDetails: {} as { [subject: string]: { types: { [key: string]: number }; total: number } },
+      subjectDetails: {} as { 
+        [subject: string]: { 
+          types: { [key: string]: number }; 
+          difficulties: { [key: number]: number };
+          total: number 
+        } 
+      },
     };
 
     questions?.forEach((q: { type: string; difficulty: number; subject: string }) => {
@@ -35,9 +41,10 @@ export async function GET(request: NextRequest) {
       stats.subjects[subject] = (stats.subjects[subject] || 0) + 1;
       // 按学科细分统计
       if (!stats.subjectDetails[subject]) {
-        stats.subjectDetails[subject] = { types: {}, total: 0 };
+        stats.subjectDetails[subject] = { types: {}, difficulties: {}, total: 0 };
       }
       stats.subjectDetails[subject].types[q.type] = (stats.subjectDetails[subject].types[q.type] || 0) + 1;
+      stats.subjectDetails[subject].difficulties[q.difficulty] = (stats.subjectDetails[subject].difficulties[q.difficulty] || 0) + 1;
       stats.subjectDetails[subject].total++;
     });
 
