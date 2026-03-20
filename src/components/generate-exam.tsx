@@ -14,12 +14,12 @@ import { Badge } from "@/components/ui/badge";
 interface QuestionStats {
   total: number;
   types: { [key: string]: number };
-  difficulties: { [key: number]: number };
+  difficulties: { [key: string]: number };
   subjects: { [key: string]: number };
   subjectDetails: { 
     [subject: string]: { 
       types: { [key: string]: number }; 
-      difficulties: { [key: number]: number };
+      difficulties: { [key: string]: number };
       total: number 
     } 
   };
@@ -71,7 +71,7 @@ export default function GenerateExam() {
 
   // 获取当前选中学科的统计信息
   const getCurrentStats = () => {
-    if (!stats) return { total: 0, types: {} as { [key: string]: number }, difficulties: {} as { [key: number]: number } };
+    if (!stats) return { total: 0, types: {} as { [key: string]: number }, difficulties: {} as { [key: string]: number } };
     
     if (selectedSubject === "全部") {
       return {
@@ -90,7 +90,7 @@ export default function GenerateExam() {
       };
     }
     
-    return { total: 0, types: {} as { [key: string]: number }, difficulties: {} as { [key: number]: number } };
+    return { total: 0, types: {} as { [key: string]: number }, difficulties: {} as { [key: string]: number } };
   };
 
   // 获取有题目的学科列表
@@ -254,9 +254,9 @@ export default function GenerateExam() {
               <div>
                 <p className="text-sm text-slate-500 mb-2">难度分布</p>
                 <div className="flex gap-2">
-                  <Badge>简单: {getCurrentStats().difficulties[1] || 0}</Badge>
-                  <Badge>中等: {getCurrentStats().difficulties[2] || 0}</Badge>
-                  <Badge>困难: {getCurrentStats().difficulties[3] || 0}</Badge>
+                  <Badge>简单: {getCurrentStats().difficulties["1"] || 0}</Badge>
+                  <Badge>中等: {getCurrentStats().difficulties["2"] || 0}</Badge>
+                  <Badge>困难: {getCurrentStats().difficulties["3"] || 0}</Badge>
                 </div>
               </div>
             </div>
