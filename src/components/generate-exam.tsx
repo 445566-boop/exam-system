@@ -15,6 +15,8 @@ interface QuestionStats {
   total: number;
   types: { [key: string]: number };
   difficulties: { [key: number]: number };
+  subjects: { [key: string]: number };
+  subjectDetails: { [subject: string]: { types: { [key: string]: number }; total: number } };
 }
 
 interface TypeConfig {
@@ -192,7 +194,7 @@ export default function GenerateExam() {
                   ))}
                 </div>
               </div>
-              <div className="col-span-2">
+              <div>
                 <p className="text-sm text-slate-500 mb-2">难度分布</p>
                 <div className="flex gap-2">
                   <Badge>简单: {stats.difficulties[1] || 0}</Badge>
@@ -200,7 +202,41 @@ export default function GenerateExam() {
                   <Badge>困难: {stats.difficulties[3] || 0}</Badge>
                 </div>
               </div>
+              <div>
+                <p className="text-sm text-slate-500 mb-2">学科分布</p>
+                <div className="flex flex-wrap gap-1">
+                  {Object.entries(stats.subjects).map(([subject, count]) => (
+                    <Badge key={subject} variant="outline" className="bg-purple-50 text-purple-700 dark:bg-purple-950/30 dark:text-purple-400">
+                      {subject}: {count}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
             </div>
+            
+            {/* 按学科细分统计 */}
+            {Object.keys(stats.subjectDetails).length > 1 && (
+              <div className="mt-4 pt-4 border-t">
+                <p className="text-sm text-slate-500 mb-3">学科细分统计</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {Object.entries(stats.subjectDetails).map(([subject, detail]) => (
+                    <div key={subject} className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium text-purple-600 dark:text-purple-400">{subject}</span>
+                        <Badge variant="secondary">共 {detail.total} 题</Badge>
+                      </div>
+                      <div className="flex flex-wrap gap-1 text-xs">
+                        {Object.entries(detail.types).map(([type, count]) => (
+                          <Badge key={type} variant="outline" className="text-xs">
+                            {type}: {count}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

@@ -160,10 +160,11 @@ export async function POST(request: NextRequest) {
       console.log(`Processing batch ${batchNum}/${totalBatches} with ${batch.length} questions`);
 
       const prompt = `请从以下题库中提取题目和答案，返回紧凑的JSON数组格式（不要换行和缩进，节省token）。
-格式：[{"q":"题目","a":"答案","t":"单选/多选/判断/填空/简答","d":1-3,"o":["选项1","选项2"]}]
+格式：[{"q":"题目","a":"答案","t":"单选/多选/判断/填空/简答","d":1-3,"o":["选项1","选项2"],"s":"学科"}]
 
 规则：
-- t是题型，d是难度(1简单2中等3困难)，o是选项数组(非选择题为null)
+- t是题型，d是难度(1简单2中等3困难)，o是选项数组(非选择题为null)，s是学科
+- 学科识别：根据题目内容判断属于哪个学科，如：语文、数学、英语、物理、化学、生物、历史、地理、政治等
 - 只返回JSON，不要任何其他文字
 
 题库内容：
@@ -194,6 +195,7 @@ ${batchText}`;
             difficulty: normalizeDifficulty(q.d || q.difficulty || 1),
             options: q.o || q.options || null,
             explanation: q.e || q.explanation || null,
+            subject: q.s || q.subject || "未分类",
           }));
           allQuestions.push(...batchQuestions);
           console.log(`Batch ${batchNum} parsed ${batchQuestions.length} questions, total: ${allQuestions.length}`);
@@ -221,6 +223,7 @@ ${batchText}`;
       options: q.options || null,
       explanation: q.explanation || null,
       file_key: fileKey,
+      subject: q.subject || "未分类",
     }));
 
     const { data, error } = await supabase

@@ -189,18 +189,20 @@ export async function POST(request: NextRequest) {
 - t: 题型（单选/多选/判断/填空/简答）
 - d: 难度（1-3）
 - o: 选项数组（仅选择题需要，格式为["选项1内容","选项2内容","选项3内容","选项4内容"]，不要包含字母前缀）
+- s: 学科（根据题目内容判断，如：语文、数学、英语、物理、化学、生物、历史、地理、政治等）
 
 重要规则：
 1. 选择题选项内容不要包含A、B、C、D等字母前缀
 2. 选项内容要完整，不要截断
 3. 如果题目已经包含选项，请将选项分离到o字段中
+4. 根据题目内容准确判断学科归属
 
 请以紧凑的JSON数组格式返回，不要有换行和空格。`,
           },
           {
             role: "user",
             content: `请解析以下文本中的题目，返回JSON数组格式：
-[{"q":"题目","a":"答案","t":"题型","d":1,"o":["选项1","选项2","选项3","选项4"]}]
+[{"q":"题目","a":"答案","t":"题型","d":1,"o":["选项1","选项2","选项3","选项4"],"s":"学科"}]
 
 文本内容：
 ${batchText}`,
@@ -245,6 +247,7 @@ ${batchText}`,
                 type: normalizeType(item.t || "简答"),
                 difficulty: normalizeDifficulty(item.d || 1),
                 options: options,
+                subject: item.s || "未分类",
               });
             }
           }
@@ -288,6 +291,7 @@ ${batchText}`,
       type: q.type,
       difficulty: q.difficulty,
       options: q.options,
+      subject: q.subject || "未分类",
     }));
 
     const { data, error } = await supabase
