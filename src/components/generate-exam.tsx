@@ -282,7 +282,7 @@ export default function GenerateExam() {
                     </Badge>
                   ))}
                 </div>
-                <div className="h-48">
+                <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={getTypeChartData()} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -316,19 +316,19 @@ export default function GenerateExam() {
                     困难: {getCurrentStats().difficulties["3"] || 0}
                   </span>
                 </div>
-                <div className="h-48">
+                <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
                         data={getDifficultyChartData()}
                         cx="50%"
-                        cy="50%"
-                        innerRadius={40}
-                        outerRadius={70}
+                        cy="45%"
+                        innerRadius={35}
+                        outerRadius={55}
                         paddingAngle={2}
                         dataKey="value"
                         label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                        labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}
+                        labelLine={true}
                       >
                         {getDifficultyChartData().map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={entry.color} />
@@ -339,7 +339,7 @@ export default function GenerateExam() {
                       />
                       <Legend 
                         verticalAlign="bottom" 
-                        height={20}
+                        height={24}
                         formatter={(value) => <span style={{ color: '#475569', fontSize: '12px' }}>{value}</span>}
                       />
                     </PieChart>
