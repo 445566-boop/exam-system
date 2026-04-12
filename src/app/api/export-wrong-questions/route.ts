@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseClient } from "@/storage/database/supabase-client";
-import { S3Storage } from "coze-coding-dev-sdk";
+import { uploadFile, generateDownloadUrl } from "@/lib/unified-storage";
 import {
   Document,
   Paragraph,
@@ -33,19 +33,15 @@ export async function GET(request: NextRequest) {
     const doc = await generateWrongQuestionsDocument(questions);
     const buffer = await Packer.toBuffer(doc);
 
-    // 上传到对象存储
-    const storage = new S3Storage();
-    const fileKey = await storage.uploadFile({
+    // 上传到存储
+    const fileKey = await uploadFile({
       fileContent: buffer,
       fileName: `wrong-questions/错题集_${Date.now()}.docx`,
       contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
 
     // 生成下载链接
-    const downloadUrl = await storage.generatePresignedUrl({
-      key: fileKey,
-      expireTime: 3600, // 1小时有效
-    });
+    const downloadUrl = await generateDownloadUrl(fileKey);
 
     return NextResponse.json({ downloadUrl });
   } catch (error) {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseClient } from "@/storage/database/supabase-client";
-import { S3Storage } from "coze-coding-dev-sdk";
+import { uploadFile, generateDownloadUrl } from "@/lib/unified-storage";
 import {
   Document,
   Paragraph,
@@ -132,19 +132,15 @@ export async function POST(request: NextRequest) {
     const doc = generateExamDocument(title, selectedQuestions);
     const buffer = await Packer.toBuffer(doc);
 
-    // 上传到对象存储
-    const storage = new S3Storage();
-    const fileKey = await storage.uploadFile({
+    // 上传到存储
+    const fileKey = await uploadFile({
       fileContent: buffer,
       fileName: `exams/${title}_${Date.now()}.docx`,
       contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
 
     // 生成下载链接
-    const downloadUrl = await storage.generatePresignedUrl({
-      key: fileKey,
-      expireTime: 3600,
-    });
+    const downloadUrl = await generateDownloadUrl(fileKey);
 
     // 保存试卷记录到数据库
     await supabase.from("exam_paper").insert({
