@@ -195,6 +195,7 @@ export default function GenerateExam() {
             count: t.count,
           })),
           difficulty,
+          subject: selectedSubject === "全部" ? "all" : selectedSubject,
         }),
       });
 

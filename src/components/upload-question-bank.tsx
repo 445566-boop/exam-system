@@ -1,23 +1,45 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Upload, FileText, Loader2, CheckCircle, AlertCircle } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectSeparator } from "@/components/ui/select";
 
 interface UploadResult {
   success: boolean;
   message: string;
   count?: number;
+  subject?: string;
 }
+
+const SUBJECT_LIST = [
+  "语文", "数学", "英语", "物理", "化学", "生物",
+  "历史", "地理", "政治", "信息技术", "通用技术", "其他"
+];
 
 export default function UploadQuestionBank() {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<UploadResult | null>(null);
+  const [selectedSubject, setSelectedSubject] = useState<string>("数学");
+  const [existingSubjects, setExistingSubjects] = useState<string[]>([]);
+
+  // 获取现有学科列表
+  useEffect(() => {
+    fetch('/api/question-stats')
+      .then(res => res.json())
+      .then(data => {
+        if (data.subjects) {
+          setExistingSubjects(Object.keys(data.subjects));
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -49,6 +71,7 @@ export default function UploadQuestionBank() {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('subject', selectedSubject);
 
       // 模拟进度
       const progressInterval = setInterval(() => {
@@ -68,8 +91,9 @@ export default function UploadQuestionBank() {
       if (response.ok) {
         setResult({
           success: true,
-          message: `成功上传并解析题库，共 ${data.count || 0} 道题目`,
+          message: data.message,
           count: data.count,
+          subject: data.subject,
         });
       } else {
         setResult({
@@ -125,6 +149,42 @@ export default function UploadQuestionBank() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* 学科选择 */}
+          <div className="space-y-2">
+            <Label htmlFor="subject-select">选择学科</Label>
+            <Select value={selectedSubject} onValueChange={setSelectedSubject} disabled={uploading}>
+              <SelectTrigger id="subject-select" className="w-full md:w-64">
+                <SelectValue placeholder="请选择学科" />
+              </SelectTrigger>
+              <SelectContent>
+                {existingSubjects.length > 0 && (
+                  <>
+                    <div className="px-2 py-1.5 text-xs font-medium text-slate-500">题库已有学科</div>
+                    {existingSubjects.map(subject => (
+                      <SelectItem key={subject} value={subject}>
+                        {subject}
+                      </SelectItem>
+                    ))}
+                    {SUBJECT_LIST.some(s => !existingSubjects.includes(s)) && (
+                      <>
+                        <SelectSeparator />
+                        <div className="px-2 py-1.5 text-xs font-medium text-slate-500">其他学科</div>
+                      </>
+                    )}
+                  </>
+                )}
+                {SUBJECT_LIST.filter(s => existingSubjects.length === 0 || !existingSubjects.includes(s)).map(subject => (
+                  <SelectItem key={subject} value={subject}>
+                    {subject}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-slate-500">
+              选择题目所属的学科，上传后将按此学科分类管理
+            </p>
+          </div>
+
           {/* 上传区域 */}
           <div
             className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
