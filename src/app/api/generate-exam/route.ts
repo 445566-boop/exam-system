@@ -40,10 +40,11 @@ function shuffleArray<T>(array: T[]): T[] {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { title, typeConfigs, difficulty } = body as {
+    const { title, typeConfigs, difficulty, subject } = body as {
       title: string;
       typeConfigs: TypeConfig[];
       difficulty: string;
+      subject?: string; // 学科筛选参数
     };
 
     if (!title || !typeConfigs || typeConfigs.length === 0) {
@@ -66,11 +67,23 @@ export async function POST(request: NextRequest) {
       query = query.eq("difficulty", parseInt(difficulty));
     }
 
+    // 学科筛选（新增）
+    if (subject && subject !== "all") {
+      query = query.eq("subject", subject);
+      console.log(`Filtering by subject: ${subject}`);
+    }
+
     const { data: questions, error } = await query;
 
     if (error || !questions || questions.length === 0) {
       return NextResponse.json({ error: "题库中没有符合条件的题目" }, { status: 400 });
     }
+
+    // 记录实际筛选到的学科分布
+    const subjectDistribution = questions.reduce((acc: Record<string, number>, q: any) => {
+      acc[q.subject] = (acc[q.subject] || 0) + 1;
+      return acc;
+    }, {});
 
     // 按题型选择题目
     const selectedQuestions: QuestionData[] = [];
@@ -154,13 +167,15 @@ export async function POST(request: NextRequest) {
           options: q.options,
         })),
       },
-      config: { typeConfigs, difficulty },
+      config: { typeConfigs, difficulty, subject },
     });
 
     return NextResponse.json({
       success: true,
       downloadUrl,
       count: selectedQuestions.length,
+      subject: subject || "all",
+      subjectDistribution,
       warning: insufficientTypes.length > 0 ? `部分题型数量不足：${insufficientTypes.join("、")}` : undefined,
     });
   } catch (error) {

@@ -101,14 +101,45 @@ function tryParseJSON(content: string): any {
   }
 }
 
+// 预定义学科列表（可扩展）
+const SUBJECT_LIST = [
+  "语文", "数学", "英语", "物理", "化学", "生物",
+  "历史", "地理", "政治", "信息技术", "通用技术", "其他"
+];
+
+// 规范化学科名称
+function normalizeSubject(subject: string): string {
+  const trimmed = subject.trim();
+  // 精确匹配
+  if (SUBJECT_LIST.includes(trimmed)) {
+    return trimmed;
+  }
+  // 模糊匹配（如"数"匹配"数学"）
+  const lowerTrimmed = trimmed.toLowerCase();
+  for (const s of SUBJECT_LIST) {
+    if (s.includes(trimmed) || trimmed.includes(s) || 
+        s[0] === trimmed[0]) { // 首字匹配
+      return s;
+    }
+  }
+  return trimmed || "其他";
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File;
+    // 获取用户指定的学科（可选参数）
+    const userSubject = formData.get("subject") as string | null;
 
     if (!file) {
       return NextResponse.json({ error: "请上传文件" }, { status: 400 });
     }
+
+    // 规范化用户指定的学科
+    const normalizedUserSubject = userSubject ? normalizeSubject(userSubject) : null;
+
+    console.log(`User specified subject: ${userSubject} -> ${normalizedUserSubject}`);
 
     // 读取文件内容
     const buffer = Buffer.from(await file.arrayBuffer());
@@ -159,16 +190,21 @@ export async function POST(request: NextRequest) {
       
       console.log(`Processing batch ${batchNum}/${totalBatches} with ${batch.length} questions`);
 
+      // 学科处理：优先使用用户指定的学科，否则由 LLM 识别
+      const subjectHint = normalizedUserSubject 
+        ? `（注：本题库统一学科为【${normalizedUserSubject}】）` 
+        : "";
+      
       const prompt = `请从以下题库中提取题目和答案，返回紧凑的JSON数组格式（不要换行和缩进，节省token）。
 格式：[{"q":"题目","a":"答案","t":"单选/多选/判断/填空/简答","d":1-3,"o":["选项1","选项2"],"s":"学科"}]
 
 规则：
-- t是题型，d是难度(1简单2中等3困难)，o是选项数组(非选择题为null)，s是学科
-- 学科识别：根据题目内容判断属于哪个学科，如：语文、数学、英语、物理、化学、生物、历史、地理、政治等
+- t是题型，d是难度(1简单2中等3困难)，o是选项数组(非选择题为null)
+- 学科识别：${normalizedUserSubject ? `统一设为"${normalizedUserSubject}"` : '根据题目内容判断属于哪个学科，如：语文、数学、英语、物理、化学、生物、历史、地理、政治等'}
 - 只返回JSON，不要任何其他文字
 
 题库内容：
-${batchText}`;
+${batchText}${subjectHint}`;
 
       // 使用流式输出获取完整响应
       const stream = client.stream([
@@ -223,7 +259,8 @@ ${batchText}`;
       options: q.options || null,
       explanation: q.explanation || null,
       file_key: fileKey,
-      subject: q.subject || "未分类",
+      // 优先使用用户指定的学科，否则使用 LLM 识别的学科
+      subject: normalizedUserSubject || q.subject || "未分类",
     }));
 
     const { data, error } = await supabase
@@ -239,7 +276,8 @@ ${batchText}`;
     return NextResponse.json({
       success: true,
       count: data?.length || allQuestions.length,
-      message: `成功上传并解析 ${data?.length || allQuestions.length} 道题目`,
+      subject: normalizedUserSubject || allQuestions[0]?.subject || "未分类",
+      message: `成功上传并解析 ${data?.length || allQuestions.length} 道题目${normalizedUserSubject ? `（学科：${normalizedUserSubject}）` : ""}`,
     });
   } catch (error) {
     console.error("Upload error:", error);
