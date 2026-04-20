@@ -1,132 +1,84 @@
 /**
- * LLM 适配器 - 使用原生 axios 调用 OpenAI 兼容 API
+ * LLM 适配器 - 使用 coze-coding-dev-sdk（服务端专用）
  * 
- * 支持任何兼容 OpenAI API 格式的服务商：
- * - OpenAI
- * - DeepSeek
- * - Kimi
- * - 本地部署的 LLM 服务
- * 
- * 环境变量配置：
- * - OPENAI_API_KEY: API 密钥
- * - OPENAI_BASE_URL: API 基础 URL (默认: https://api.openai.com/v1)
- * - OPENAI_MODEL: 模型名称 (默认: gpt-4o-mini)
+ * 使用说明：
+ * 1. 仅在服务端代码中使用（API routes）
+ * 2. 使用动态导入避免 Next.js 编译问题
  */
-
-import axios, { AxiosInstance } from 'axios';
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
 }
 
-export interface LLMConfig {
-  apiKey: string;
-  baseURL?: string;
-  model?: string;
-  temperature?: number;
+export interface LLMStreamChunk {
+  content?: string | unknown;
 }
 
-function getConfig(): LLMConfig {
-  return {
-    apiKey: process.env.OPENAI_API_KEY || '',
-    baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-    temperature: 0.3,
-  };
-}
+// 默认使用 doubao-seed-1-6-251015（通用对话模型）
+const DEFAULT_MODEL = 'doubao-seed-1-6-251015';
 
 /**
- * 创建 LLM 客户端
- */
-function createClient(): AxiosInstance {
-  const config = getConfig();
-  return axios.create({
-    baseURL: config.baseURL,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`,
-    },
-    timeout: 120000, // 2分钟超时
-  });
-}
-
-/**
- * 流式调用 LLM
- * @param messages 消息列表
- * @param onChunk 每次接收到的文本块回调
+ * 流式调用 LLM (Coze API)
  */
 export async function streamLLM(
   messages: LLMMessage[],
-  onChunk: (content: string) => void
+  onChunk: (content: string) => void,
+  options?: { model?: string; temperature?: number }
 ): Promise<string> {
-  const config = getConfig();
-  const client = createClient();
+  // 动态导入 coze-coding-dev-sdk
+  const { LLMClient, Config } = await import('coze-coding-dev-sdk');
+  
+  const config = new Config({
+    timeout: 120000,
+  });
+  const client = new LLMClient(config);
 
-  const response = await client.post(
-    '/chat/completions',
-    {
-      model: config.model,
-      messages,
-      stream: true,
-      temperature: config.temperature,
-    },
-    {
-      responseType: 'stream',
-    }
+  const model = options?.model || DEFAULT_MODEL;
+  const temperature = options?.temperature ?? 0.3;
+
+  const stream = client.stream(
+    messages,
+    { model, temperature }
   );
 
-  const stream = response.data as NodeJS.ReadableStream;
   let fullContent = '';
+  for await (const chunk of stream) {
+    const content = (chunk as LLMStreamChunk).content;
+    if (content) {
+      const text = content.toString();
+      fullContent += text;
+      onChunk(text);
+    }
+  }
 
-  return new Promise((resolve, reject) => {
-    stream.on('data', (chunk: Buffer) => {
-      const lines = chunk.toString().split('\n');
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data === '[DONE]') {
-            return;
-          }
-          try {
-            const parsed = JSON.parse(data);
-            const content = parsed.choices?.[0]?.delta?.content;
-            if (content) {
-              fullContent += content;
-              onChunk(content);
-            }
-          } catch (e) {
-            // 忽略解析错误
-          }
-        }
-      }
-    });
-
-    stream.on('end', () => {
-      resolve(fullContent);
-    });
-
-    stream.on('error', (err: Error) => {
-      reject(err);
-    });
-  });
+  return fullContent;
 }
 
 /**
- * 非流式调用 LLM
- * @param messages 消息列表
+ * 非流式调用 LLM (Coze API)
  */
-export async function callLLM(messages: LLMMessage[]): Promise<string> {
-  const config = getConfig();
-  const client = createClient();
-
-  const response = await client.post('/chat/completions', {
-    model: config.model,
-    messages,
-    temperature: config.temperature,
+export async function callLLM(
+  messages: LLMMessage[],
+  options?: { model?: string; temperature?: number }
+): Promise<string> {
+  // 动态导入 coze-coding-dev-sdk
+  const { LLMClient, Config } = await import('coze-coding-dev-sdk');
+  
+  const config = new Config({
+    timeout: 120000,
   });
+  const client = new LLMClient(config);
 
-  return response.data.choices?.[0]?.message?.content || '';
+  const model = options?.model || DEFAULT_MODEL;
+  const temperature = options?.temperature ?? 0.3;
+
+  const response = await client.invoke(
+    messages,
+    { model, temperature }
+  );
+
+  return response.content?.toString() || '';
 }
 
 /**

@@ -12,10 +12,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "请上传文件" }, { status: 400 });
     }
 
+    console.log("Grade exam: file received, size =", file.size);
+
     // 读取文件内容
     const buffer = Buffer.from(await file.arrayBuffer());
     const result = await mammoth.extractRawText({ buffer });
     const text = result.value;
+
+    console.log("Grade exam: text extracted, length =", text.length);
 
     // 使用 LLM 解析试卷答案
     const parsePrompt = `请从以下试卷中提取所有题目和用户的答案，按照JSON格式返回。格式要求：
@@ -33,14 +37,23 @@ export async function POST(request: NextRequest) {
 试卷内容：
 ${text}`;
 
+    console.log("Grade exam: calling LLM to parse answers...");
+
     // 使用流式输出获取完整响应
     let parseResponseText = "";
-    await streamLLM(
-      [{ role: "user", content: parsePrompt }],
-      (chunk) => {
-        parseResponseText += chunk;
-      }
-    );
+    try {
+      await streamLLM(
+        [{ role: "user", content: parsePrompt }],
+        (chunk) => {
+          parseResponseText += chunk;
+        }
+      );
+    } catch (llmError) {
+      console.error("Grade exam: LLM call failed:", llmError);
+      return NextResponse.json({ error: `LLM 调用失败: ${String(llmError)}` }, { status: 500 });
+    }
+
+    console.log("Grade exam: LLM response received, length =", parseResponseText.length);
 
     // 解析 LLM 返回的 JSON
     let answers;
@@ -65,6 +78,8 @@ ${text}`;
     if (error || !questions) {
       return NextResponse.json({ error: "获取题库失败" }, { status: 500 });
     }
+
+    console.log("Grade exam: got", questions.length, "questions from database");
 
     // 使用 LLM 进行答案匹配和批改
     const gradePrompt = `你是一个阅卷老师，请根据以下题库答案批改用户的试卷答案。
@@ -96,14 +111,23 @@ ${JSON.stringify(answers, null, 2)}
 3. 对于填空题和简答题，判断关键词是否匹配
 4. 只返回JSON，不要有其他内容`;
 
+    console.log("Grade exam: calling LLM to grade...");
+
     // 使用流式输出获取完整响应
     let gradeResponseText = "";
-    await streamLLM(
-      [{ role: "user", content: gradePrompt }],
-      (chunk) => {
-        gradeResponseText += chunk;
-      }
-    );
+    try {
+      await streamLLM(
+        [{ role: "user", content: gradePrompt }],
+        (chunk) => {
+          gradeResponseText += chunk;
+        }
+      );
+    } catch (llmError) {
+      console.error("Grade exam: LLM grading failed:", llmError);
+      return NextResponse.json({ error: `批改失败: ${String(llmError)}` }, { status: 500 });
+    }
+
+    console.log("Grade exam: grading response received, length =", gradeResponseText.length);
 
     // 解析批改结果
     let gradeResult;
@@ -188,6 +212,8 @@ ${JSON.stringify(answers, null, 2)}
       }
     }
 
+    console.log("Grade exam: completed, score =", gradeResult.score);
+
     return NextResponse.json({
       score: gradeResult.score,
       total: gradeResult.total,
@@ -203,7 +229,7 @@ ${JSON.stringify(answers, null, 2)}
   } catch (error) {
     console.error("Grade exam error:", error);
     return NextResponse.json(
-      { error: "批改失败，请重试" },
+      { error: "批改失败，请重试", details: String(error) },
       { status: 500 }
     );
   }

@@ -14,6 +14,8 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // 解决 coze-coding-dev-sdk 的依赖问题
+  serverExternalPackages: ['coze-coding-dev-sdk', '@langchain/openai', '@langchain/core'],
 };
 
 export default nextConfig;
