@@ -1,18 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import mammoth from "mammoth";
-import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
+import { streamLLM, extractJSON } from "@/lib/llm-adapter";
 import { getSupabaseClient } from "@/storage/database/supabase-client";
-
-// 收集流式响应的辅助函数
-async function collectStreamResponse(stream: AsyncGenerator<any>): Promise<string> {
-  let content = "";
-  for await (const chunk of stream) {
-    if (chunk.content) {
-      content += chunk.content.toString();
-    }
-  }
-  return content;
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,10 +18,6 @@ export async function POST(request: NextRequest) {
     const text = result.value;
 
     // 使用 LLM 解析试卷答案
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
-    const config = new Config();
-    const client = new LLMClient(config, customHeaders);
-
     const parsePrompt = `请从以下试卷中提取所有题目和用户的答案，按照JSON格式返回。格式要求：
 [
   {
@@ -49,19 +34,18 @@ export async function POST(request: NextRequest) {
 ${text}`;
 
     // 使用流式输出获取完整响应
-    const parseStream = client.stream([
-      { role: "user", content: parsePrompt }
-    ], { temperature: 0.3 });
-
-    const parseResponseText = await collectStreamResponse(parseStream);
+    let parseResponseText = "";
+    await streamLLM(
+      [{ role: "user", content: parsePrompt }],
+      (chunk) => {
+        parseResponseText += chunk;
+      }
+    );
 
     // 解析 LLM 返回的 JSON
     let answers;
     try {
-      let content = parseResponseText.trim();
-      if (content.startsWith("```")) {
-        content = content.replace(/```json\n?/g, "").replace(/```\n?/g, "");
-      }
+      const content = extractJSON(parseResponseText);
       answers = JSON.parse(content);
     } catch (e) {
       console.error("Failed to parse LLM response:", parseResponseText.substring(0, 500));
@@ -113,19 +97,18 @@ ${JSON.stringify(answers, null, 2)}
 4. 只返回JSON，不要有其他内容`;
 
     // 使用流式输出获取完整响应
-    const gradeStream = client.stream([
-      { role: "user", content: gradePrompt }
-    ], { temperature: 0.3 });
-
-    const gradeResponseText = await collectStreamResponse(gradeStream);
+    let gradeResponseText = "";
+    await streamLLM(
+      [{ role: "user", content: gradePrompt }],
+      (chunk) => {
+        gradeResponseText += chunk;
+      }
+    );
 
     // 解析批改结果
     let gradeResult;
     try {
-      let content = gradeResponseText.trim();
-      if (content.startsWith("```")) {
-        content = content.replace(/```json\n?/g, "").replace(/```\n?/g, "");
-      }
+      const content = extractJSON(gradeResponseText);
       gradeResult = JSON.parse(content);
     } catch (e) {
       console.error("Failed to parse grade response:", gradeResponseText.substring(0, 500));

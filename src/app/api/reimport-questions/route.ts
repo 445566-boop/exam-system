@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import mammoth from "mammoth";
-import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
+import { streamLLM, extractJSON } from "@/lib/llm-adapter";
 import { getSupabaseClient } from "@/storage/database/supabase-client";
 
 // 统一题型名称映射
@@ -163,10 +163,6 @@ export async function POST(request: NextRequest) {
     const batchSize = 30;
     const allQuestions: any[] = [];
 
-    // 初始化LLM客户端
-    const config = new Config();
-    const client = new LLMClient(config);
-
     for (let i = 0; i < lines.length; i += batchSize) {
       const batchLines = lines.slice(i, i + batchSize);
       const batchNum = Math.floor(i / batchSize) + 1;
@@ -178,10 +174,13 @@ export async function POST(request: NextRequest) {
       console.log(`Processing batch ${batchNum}, lines: ${batchLines.length}`);
 
       try {
-        const stream = client.stream([
-          {
-            role: "system",
-            content: `你是一个专业的题目解析助手。请从给定的文本中提取所有题目，包括选择题、判断题、填空题和简答题。
+        // 使用流式输出获取完整响应
+        let fullContent = "";
+        await streamLLM(
+          [
+            {
+              role: "system",
+              content: `你是一个专业的题目解析助手。请从给定的文本中提取所有题目，包括选择题、判断题、填空题和简答题。
 
 对于每道题目，提取以下信息：
 - q: 题目内容（选择题只包含题干，不要包含选项）
@@ -198,28 +197,24 @@ export async function POST(request: NextRequest) {
 4. 根据题目内容准确判断学科归属
 
 请以紧凑的JSON数组格式返回，不要有换行和空格。`,
-          },
-          {
-            role: "user",
-            content: `请解析以下文本中的题目，返回JSON数组格式：
+            },
+            {
+              role: "user",
+              content: `请解析以下文本中的题目，返回JSON数组格式：
 [{"q":"题目","a":"答案","t":"题型","d":1,"o":["选项1","选项2","选项3","选项4"],"s":"学科"}]
 
 文本内容：
 ${batchText}`,
-          },
-        ], { temperature: 0.3, model: "doubao-seed-1-6-flash-250615" });
-
-        // 收集完整响应
-        let fullContent = "";
-        for await (const chunk of stream) {
-          if (chunk.content) {
-            fullContent += chunk.content.toString();
+            },
+          ],
+          (chunk) => {
+            fullContent += chunk;
           }
-        }
+        );
 
         console.log(`Batch ${batchNum} response length:`, fullContent.length);
 
-        const parsed = tryParseJSON(fullContent);
+        const parsed = tryParseJSON(extractJSON(fullContent));
         if (Array.isArray(parsed)) {
           for (const item of parsed) {
             if (item.q && item.a) {
@@ -263,10 +258,6 @@ ${batchText}`,
     const newQuestions = allQuestions.filter((q) => {
       const normalizedQuestion = q.question.trim();
       // 检查是否已存在
-      if (existingSet.has(normalizedQuestion)) {
-        return false;
-      }
-      // 检查是否在本批次中已添加
       if (existingSet.has(normalizedQuestion)) {
         return false;
       }

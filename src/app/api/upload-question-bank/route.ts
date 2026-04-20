@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import mammoth from "mammoth";
-import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
+import { streamLLM, extractJSON } from "@/lib/llm-adapter";
 import { getSupabaseClient } from "@/storage/database/supabase-client";
-import { S3Storage } from "coze-coding-dev-sdk";
+import { uploadFile } from "@/lib/unified-storage";
 
 // 统一题型名称映射
 const TYPE_MAPPINGS: Record<string, string> = {
@@ -101,24 +101,21 @@ function tryParseJSON(content: string): any {
   }
 }
 
-// 预定义学科列表（可扩展）
-const SUBJECT_LIST = [
-  "语文", "数学", "英语", "物理", "化学", "生物",
-  "历史", "地理", "政治", "信息技术", "通用技术", "其他"
-];
-
 // 规范化学科名称
 function normalizeSubject(subject: string): string {
   const trimmed = subject.trim();
+  const SUBJECT_LIST = [
+    "语文", "数学", "英语", "物理", "化学", "生物",
+    "历史", "地理", "政治", "信息技术", "通用技术", "其他"
+  ];
+  
   // 精确匹配
   if (SUBJECT_LIST.includes(trimmed)) {
     return trimmed;
   }
-  // 模糊匹配（如"数"匹配"数学"）
-  const lowerTrimmed = trimmed.toLowerCase();
+  // 模糊匹配
   for (const s of SUBJECT_LIST) {
-    if (s.includes(trimmed) || trimmed.includes(s) || 
-        s[0] === trimmed[0]) { // 首字匹配
+    if (s.includes(trimmed) || trimmed.includes(s) || s[0] === trimmed[0]) {
       return s;
     }
   }
@@ -145,8 +142,7 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer());
     
     // 上传文件到对象存储
-    const storage = new S3Storage();
-    const fileKey = await storage.uploadFile({
+    const fileKey = await uploadFile({
       fileContent: buffer,
       fileName: `question-banks/${file.name}`,
       contentType: file.type,
@@ -165,11 +161,6 @@ export async function POST(request: NextRequest) {
     ).length;
     
     console.log(`Document has ${lines.length} lines, estimated ${estimatedQuestionCount} questions`);
-
-    // 使用 LLM 解析题目和答案
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
-    const config = new Config();
-    const client = new LLMClient(config, customHeaders);
 
     // 分批处理，每批处理约30道题
     const BATCH_SIZE = 30;
@@ -207,21 +198,18 @@ export async function POST(request: NextRequest) {
 ${batchText}${subjectHint}`;
 
       // 使用流式输出获取完整响应
-      const stream = client.stream([
-        { role: "user", content: prompt }
-      ], { temperature: 0.3, model: "doubao-seed-1-6-flash-250615" }); // 使用快速模型
-
-      // 收集完整响应
       let fullContent = "";
-      for await (const chunk of stream) {
-        if (chunk.content) {
-          fullContent += chunk.content.toString();
+      await streamLLM(
+        [{ role: "user", content: prompt }],
+        (chunk) => {
+          fullContent += chunk;
         }
-      }
+      );
 
       // 解析 JSON
       try {
-        let batchQuestions = tryParseJSON(fullContent);
+        const jsonContent = extractJSON(fullContent);
+        let batchQuestions = tryParseJSON(jsonContent);
         if (Array.isArray(batchQuestions)) {
           // 转换为完整格式并规范化
           batchQuestions = batchQuestions.map((q: any) => ({
