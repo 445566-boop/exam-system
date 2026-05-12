@@ -5,6 +5,7 @@ import { getSupabaseClient } from "@/storage/database/supabase-client";
 import { getLocalDb, useLocalDatabase } from "@/storage/database/local-db";
 import { questionBank } from "@/storage/database/shared/schema";
 import { uploadFile } from "@/lib/unified-storage";
+import { repairAndParseJSON, normalizeQuestion } from "@/lib/json-repair";
 
 // 统一题型名称映射
 const TYPE_MAPPINGS: Record<string, string> = {
@@ -211,20 +212,22 @@ ${batchText}${subjectHint}`;
       // 解析 JSON
       try {
         const jsonContent = extractJSON(fullContent);
-        let batchQuestions = tryParseJSON(jsonContent);
-        if (Array.isArray(batchQuestions)) {
+        const result = repairAndParseJSON(jsonContent);
+        
+        if (result.success && result.data.length > 0) {
           // 转换为完整格式并规范化
-          batchQuestions = batchQuestions.map((q: any) => ({
-            question: q.q || q.question || "",
-            answer: q.a || q.answer || "",
-            type: normalizeType(q.t || q.type || "简答"),
-            difficulty: normalizeDifficulty(q.d || q.difficulty || 1),
-            options: q.o || q.options || null,
-            explanation: q.e || q.explanation || null,
-            subject: q.s || q.subject || "未分类",
-          }));
+          const batchQuestions = result.data.map((q: any) => 
+            normalizeQuestion(q, normalizedUserSubject || undefined)
+          ).filter((q: any) => q.question && q.answer);
+          
           allQuestions.push(...batchQuestions);
           console.log(`Batch ${batchNum} parsed ${batchQuestions.length} questions, total: ${allQuestions.length}`);
+          
+          if (result.errors.length > 0) {
+            console.log(`Batch ${batchNum} warnings:`, result.errors);
+          }
+        } else {
+          console.error(`Batch ${batchNum} parse failed:`, result.errors);
         }
       } catch (e) {
         console.error(`Batch ${batchNum} parse error:`, e);
