@@ -24,6 +24,7 @@ export const questionBank = pgTable("question_bank", {
 	options: jsonb("options").$type<string[]>(), // 选项（针对选择题）
 	explanation: text("explanation"), // 解析
 	file_key: text("file_key"), // 对应的文件存储key
+	subject: text("subject"), // 学科
 	created_at: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow(),
 });
 

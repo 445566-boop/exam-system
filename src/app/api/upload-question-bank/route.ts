@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import mammoth from "mammoth";
 import { streamLLM, extractJSON } from "@/lib/llm-adapter";
 import { getSupabaseClient } from "@/storage/database/supabase-client";
+import { getLocalDb, useLocalDatabase } from "@/storage/database/local-db";
+import { questionBank } from "@/storage/database/shared/schema";
 import { uploadFile } from "@/lib/unified-storage";
 
 // 统一题型名称映射
@@ -237,8 +239,7 @@ ${batchText}${subjectHint}`;
       return NextResponse.json({ error: "未能从文档中提取到题目，请检查文档格式" }, { status: 400 });
     }
 
-    // 存储到数据库
-    const supabase = getSupabaseClient();
+    // 准备插入数据
     const questionsToInsert = allQuestions.map(q => ({
       question: q.question || "",
       answer: q.answer || "",
@@ -246,26 +247,51 @@ ${batchText}${subjectHint}`;
       difficulty: normalizeDifficulty(q.difficulty || 1),
       options: q.options || null,
       explanation: q.explanation || null,
-      file_key: fileKey,
-      // 优先使用用户指定的学科，否则使用 LLM 识别的学科
       subject: normalizedUserSubject || q.subject || "未分类",
     }));
 
-    const { data, error } = await supabase
-      .from("question_bank")
-      .insert(questionsToInsert)
-      .select();
+    let insertedCount = 0;
 
-    if (error) {
-      console.error("Database error:", error);
-      return NextResponse.json({ error: "保存题目失败" }, { status: 500 });
+    // 检查是否使用本地数据库
+    if (useLocalDatabase()) {
+      console.log("Using local PostgreSQL database");
+      const db = getLocalDb();
+      
+      for (const q of questionsToInsert) {
+        await db.insert(questionBank).values(q);
+        insertedCount++;
+      }
+    } else {
+      console.log("Using Supabase database");
+      const supabase = getSupabaseClient();
+      
+      const supabaseData = questionsToInsert.map(q => ({
+        question: q.question,
+        answer: q.answer,
+        type: q.type,
+        difficulty: q.difficulty,
+        options: q.options,
+        explanation: q.explanation,
+        subject: q.subject,
+      }));
+
+      const { data, error } = await supabase
+        .from("question_bank")
+        .insert(supabaseData)
+        .select();
+
+      if (error) {
+        console.error("Database error:", error);
+        return NextResponse.json({ error: "保存题目失败" }, { status: 500 });
+      }
+      insertedCount = data?.length || questionsToInsert.length;
     }
 
     return NextResponse.json({
       success: true,
-      count: data?.length || allQuestions.length,
+      count: insertedCount,
       subject: normalizedUserSubject || allQuestions[0]?.subject || "未分类",
-      message: `成功上传并解析 ${data?.length || allQuestions.length} 道题目${normalizedUserSubject ? `（学科：${normalizedUserSubject}）` : ""}`,
+      message: `成功上传并解析 ${insertedCount} 道题目${normalizedUserSubject ? `（学科：${normalizedUserSubject}）` : ""}`,
     });
   } catch (error) {
     console.error("Upload error:", error);
