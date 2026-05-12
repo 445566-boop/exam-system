@@ -15,8 +15,8 @@ export interface LLMStreamChunk {
   content?: string | unknown;
 }
 
-// 默认使用 doubao-seed-1-6-251015（通用对话模型）
-const DEFAULT_MODEL = 'doubao-seed-1-6-251015';
+// 默认使用 doubao-seed-2-0-lite-260215（均衡型模型，适合题库解析等生产任务）
+const DEFAULT_MODEL = 'doubao-seed-2-0-lite-260215';
 
 /**
  * 流式调用 LLM (Coze API)
