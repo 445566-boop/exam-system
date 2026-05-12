@@ -172,6 +172,33 @@ function repairCommonIssues(jsonStr: string): string {
  */
 function extractObjects(jsonStr: string): any[] {
   const objects: any[] = [];
+  
+  // 方法1：标准 JSON 提取
+  const stdObjects = extractStandardObjects(jsonStr);
+  objects.push(...stdObjects);
+  
+  // 如果标准方法提取到足够多的对象，直接返回
+  if (objects.length >= 5) {
+    return objects;
+  }
+  
+  // 方法2：正则表达式提取（处理格式不规范的 JSON）
+  const regexObjects = extractWithRegex(jsonStr);
+  for (const obj of regexObjects) {
+    // 去重
+    if (!objects.some(o => o.q === obj.q || o.question === obj.question)) {
+      objects.push(obj);
+    }
+  }
+  
+  return objects;
+}
+
+/**
+ * 标准 JSON 对象提取
+ */
+function extractStandardObjects(jsonStr: string): any[] {
+  const objects: any[] = [];
   let depth = 0;
   let startIdx = -1;
   let inString = false;
@@ -228,6 +255,61 @@ function extractObjects(jsonStr: string): any[] {
           }
           startIdx = -1;
         }
+      }
+    }
+  }
+  
+  return objects;
+}
+
+/**
+ * 使用正则表达式提取题目信息（处理格式不规范的 JSON）
+ */
+function extractWithRegex(text: string): any[] {
+  const objects: any[] = [];
+  
+  // 匹配题目对象，支持格式不规范的 JSON
+  // 例如：{"q":"题目","a":"答案"...} 或 {"q题目","a":"答案"...}
+  const objectPattern = /\{[^{}]*"q"[^{}]*\}|\{[^{}]*"a"[^{}]*\}/g;
+  const matches = text.match(objectPattern) || [];
+  
+  for (const match of matches) {
+    try {
+      // 尝试修复格式
+      let fixed = match;
+      
+      // 修复缺少冒号后的引号：{"q题目 -> {"q":"题目
+      fixed = fixed.replace(/"([qatdos])"([^{:,}]+)/g, '"$1":"$2"');
+      
+      // 修复中文标点
+      fixed = fixed
+        .replace(/：/g, ':')
+        .replace(/，/g, ',')
+        .replace(/"/g, '"')
+        .replace(/"/g, '"');
+      
+      // 修复尾随逗号
+      fixed = fixed.replace(/,(\s*})/g, '$1');
+      
+      const obj = JSON.parse(fixed);
+      if (obj.q || obj.question || obj.a || obj.answer) {
+        objects.push(obj);
+      }
+    } catch (e) {
+      // 尝试更宽松的提取
+      const qMatch = match.match(/"q"\s*[:：]\s*"?([^",}]+)"?/);
+      const aMatch = match.match(/"a"\s*[:：]\s*"?([^",}]+)"?/);
+      const tMatch = match.match(/"t"\s*[:：]\s*"?([^",}]+)"?/);
+      const dMatch = match.match(/"d"\s*[:：]\s*(\d)/);
+      
+      if (qMatch && aMatch) {
+        objects.push({
+          q: qMatch[1].trim(),
+          a: aMatch[1].trim(),
+          t: tMatch ? tMatch[1].trim() : '简答',
+          d: dMatch ? parseInt(dMatch[1]) : 2,
+          o: null
+        });
       }
     }
   }
