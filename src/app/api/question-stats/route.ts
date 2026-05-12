@@ -1,23 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseClient } from "@/storage/database/supabase-client";
+import { getLocalDb } from "@/storage/database/local-db";
+import { questionBank } from "@/storage/database/shared/schema";
+import { sql } from "drizzle-orm";
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = getSupabaseClient();
+    const db = getLocalDb();
 
-    // 获取所有题目
-    const { data: questions, error } = await supabase
-      .from("question_bank")
-      .select("type, difficulty, subject");
-
-    if (error) {
-      console.error("Database error:", error);
-      return NextResponse.json({ error: "获取统计失败" }, { status: 500 });
-    }
+    // 获取所有题目的统计信息
+    const questions = await db
+      .select({
+        type: questionBank.type,
+        difficulty: questionBank.difficulty,
+        subject: questionBank.subject,
+      })
+      .from(questionBank)
+      .execute();
 
     // 统计数据
     const stats = {
-      total: questions?.length || 0,
+      total: questions.length || 0,
       types: {} as { [key: string]: number },
       difficulties: {} as { [key: number]: number },
       subjects: {} as { [key: string]: number },
@@ -31,11 +33,12 @@ export async function GET(request: NextRequest) {
       },
     };
 
-    questions?.forEach((q: { type: string; difficulty: number; subject: string }) => {
+    questions?.forEach((q) => {
       // 统计题型
       stats.types[q.type] = (stats.types[q.type] || 0) + 1;
       // 统计难度
-      stats.difficulties[q.difficulty] = (stats.difficulties[q.difficulty] || 0) + 1;
+      const diff = q.difficulty ?? 1;
+      stats.difficulties[diff] = (stats.difficulties[diff] || 0) + 1;
       // 统计学科
       const subject = q.subject || "未分类";
       stats.subjects[subject] = (stats.subjects[subject] || 0) + 1;
@@ -44,7 +47,7 @@ export async function GET(request: NextRequest) {
         stats.subjectDetails[subject] = { types: {}, difficulties: {}, total: 0 };
       }
       stats.subjectDetails[subject].types[q.type] = (stats.subjectDetails[subject].types[q.type] || 0) + 1;
-      stats.subjectDetails[subject].difficulties[q.difficulty] = (stats.subjectDetails[subject].difficulties[q.difficulty] || 0) + 1;
+      stats.subjectDetails[subject].difficulties[diff] = (stats.subjectDetails[subject].difficulties[diff] || 0) + 1;
       stats.subjectDetails[subject].total++;
     });
 

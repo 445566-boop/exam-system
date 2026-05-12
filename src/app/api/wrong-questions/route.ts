@@ -1,44 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseClient } from "@/storage/database/supabase-client";
+import { getLocalDb } from "@/storage/database/local-db";
+import { wrongQuestion } from "@/storage/database/shared/schema";
+import { eq, sql, ne } from "drizzle-orm";
 
 // 获取错题列表
 export async function GET(request: NextRequest) {
   try {
-    const supabase = getSupabaseClient();
+    const db = getLocalDb();
     const { searchParams } = new URL(request.url);
     const subject = searchParams.get("subject");
 
     // 构建查询
-    let query = supabase
-      .from("wrong_question")
-      .select("*")
-      .order("created_at", { ascending: false });
+    let query = db
+      .select()
+      .from(wrongQuestion)
+      .orderBy(sql`${wrongQuestion.createdAt} DESC`);
 
     // 如果指定了学科，则筛选
     if (subject && subject !== "全部") {
-      query = query.eq("subject", subject);
+      query = db
+        .select()
+        .from(wrongQuestion)
+        .where(eq(wrongQuestion.subject, subject))
+        .orderBy(sql`${wrongQuestion.createdAt} DESC`);
     }
 
-    const { data: questions, error } = await query;
+    const questions = await query.execute();
 
-    if (error) {
-      console.error("Database error:", error);
-      return NextResponse.json({ error: "获取错题失败" }, { status: 500 });
-    }
-
-    // 获取所有不重复的学科列表
-    const { data: subjectsData, error: subjectsError } = await supabase
-      .from("wrong_question")
-      .select("subject");
+    // 获取所有学科列表及数量
+    const subjectsData = await db
+      .select({ subject: wrongQuestion.subject, count: sql<number>`count(*)` })
+      .from(wrongQuestion)
+      .groupBy(wrongQuestion.subject)
+      .execute();
 
     // 统计每个学科的错题数量
     const subjectCounts: { [key: string]: number } = {};
-    if (subjectsData) {
-      subjectsData.forEach((item) => {
-        const s = item.subject || "未分类";
-        subjectCounts[s] = (subjectCounts[s] || 0) + 1;
-      });
-    }
+    subjectsData.forEach((item) => {
+      const s = item.subject || "未分类";
+      subjectCounts[s] = Number(item.count);
+    });
 
     return NextResponse.json({ 
       questions,
@@ -56,26 +57,16 @@ export async function GET(request: NextRequest) {
 // 清空所有错题
 export async function DELETE(request: NextRequest) {
   try {
-    const supabase = getSupabaseClient();
+    const db = getLocalDb();
     const { searchParams } = new URL(request.url);
     const subject = searchParams.get("subject");
 
-    let query = supabase
-      .from("wrong_question")
-      .delete();
-
-    // 如果指定了学科，只清空该学科的错题
     if (subject && subject !== "全部") {
-      query = query.eq("subject", subject);
+      // 只清空该学科的错题
+      await db.delete(wrongQuestion).where(eq(wrongQuestion.subject, subject)).execute();
     } else {
-      query = query.neq("id", 0); // 删除所有记录
-    }
-
-    const { error } = await query;
-
-    if (error) {
-      console.error("Database error:", error);
-      return NextResponse.json({ error: "清空失败" }, { status: 500 });
+      // 删除所有记录
+      await db.delete(wrongQuestion).execute();
     }
 
     return NextResponse.json({ success: true });

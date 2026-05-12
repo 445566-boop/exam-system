@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseClient } from "@/storage/database/supabase-client";
+import { getLocalDb } from "@/storage/database/local-db";
+import { questionBank, examPaper } from "@/storage/database/shared/schema";
 import { uploadFile, generateDownloadUrl } from "@/lib/unified-storage";
+import { inArray, eq, and } from "drizzle-orm";
 import {
   Document,
   Paragraph,
@@ -22,7 +24,9 @@ interface QuestionData {
   difficulty: number;
   options?: string[] | null;
   answer?: string;
+  correctAnswer?: string;
   explanation?: string | null;
+  subject?: string | null;
 }
 
 // 随机打乱数组
@@ -44,44 +48,60 @@ export async function POST(request: NextRequest) {
       title: string;
       typeConfigs: TypeConfig[];
       difficulty: string;
-      subject?: string; // 学科筛选参数
+      subject?: string;
     };
 
     if (!title || !typeConfigs || typeConfigs.length === 0) {
       return NextResponse.json({ error: "参数不完整" }, { status: 400 });
     }
 
-    const supabase = getSupabaseClient();
+    const db = getLocalDb();
 
     // 获取所有选中的题型
     const selectedTypes = typeConfigs.map((t) => t.type);
 
     // 构建查询条件
-    let query = supabase
-      .from("question_bank")
-      .select("*")
-      .in("type", selectedTypes);
+    const conditions = [inArray(questionBank.type, selectedTypes)];
 
     // 难度筛选
     if (difficulty !== "all" && difficulty !== "mixed") {
-      query = query.eq("difficulty", parseInt(difficulty));
+      conditions.push(eq(questionBank.difficulty, parseInt(difficulty)));
     }
 
-    // 学科筛选（新增）
+    // 学科筛选
     if (subject && subject !== "all") {
-      query = query.eq("subject", subject);
+      conditions.push(eq(questionBank.subject, subject));
       console.log(`Filtering by subject: ${subject}`);
     }
 
-    const { data: questions, error } = await query;
+    // 查询题目
+    const questions = await db
+      .select()
+      .from(questionBank)
+      .where(and(...conditions))
+      .execute();
 
-    if (error || !questions || questions.length === 0) {
+    if (!questions || questions.length === 0) {
       return NextResponse.json({ error: "题库中没有符合条件的题目" }, { status: 400 });
     }
 
+    // 转换为 QuestionData 格式
+    const questionData: QuestionData[] = questions.map((q) => ({
+      id: q.id,
+      question: q.question,
+      type: q.type,
+      difficulty: q.difficulty ?? 1,
+      options: q.options,
+      answer: q.correctAnswer || q.answer || undefined,
+      correctAnswer: q.correctAnswer || q.answer || undefined,
+      explanation: q.explanation,
+      subject: q.subject,
+    }));
+
     // 记录实际筛选到的学科分布
-    const subjectDistribution = questions.reduce((acc: Record<string, number>, q: any) => {
-      acc[q.subject] = (acc[q.subject] || 0) + 1;
+    const subjectDistribution = questionData.reduce((acc: Record<string, number>, q) => {
+      const s = q.subject || "未分类";
+      acc[s] = (acc[s] || 0) + 1;
       return acc;
     }, {});
 
@@ -90,13 +110,13 @@ export async function POST(request: NextRequest) {
 
     for (const typeConfig of typeConfigs) {
       // 筛选该题型的所有题目
-      let typeQuestions = questions.filter((q: QuestionData) => q.type === typeConfig.type);
+      let typeQuestions = questionData.filter((q) => q.type === typeConfig.type);
 
       // 如果是混合难度，按比例分配
       if (difficulty === "mixed" && typeQuestions.length > 0) {
-        const easy = typeQuestions.filter((q: QuestionData) => q.difficulty === 1);
-        const medium = typeQuestions.filter((q: QuestionData) => q.difficulty === 2);
-        const hard = typeQuestions.filter((q: QuestionData) => q.difficulty === 3);
+        const easy = typeQuestions.filter((q) => q.difficulty === 1);
+        const medium = typeQuestions.filter((q) => q.difficulty === 2);
+        const hard = typeQuestions.filter((q) => q.difficulty === 3);
 
         const count = typeConfig.count;
         const easyCount = Math.ceil(count * 0.3);
@@ -105,23 +125,18 @@ export async function POST(request: NextRequest) {
 
         const selected: QuestionData[] = [];
 
-        // 添加简单题
         selected.push(...shuffleArray(easy).slice(0, easyCount));
-        // 添加中等题
         selected.push(...shuffleArray(medium).slice(0, mediumCount));
-        // 添加困难题
         selected.push(...shuffleArray(hard).slice(0, hardCount));
 
-        // 如果数量不够，从该题型所有题目中随机补充
         if (selected.length < count) {
           const selectedIds = new Set(selected.map((q) => q.id));
-          const remaining = typeQuestions.filter((q: QuestionData) => !selectedIds.has(q.id));
+          const remaining = typeQuestions.filter((q) => !selectedIds.has(q.id));
           selected.push(...shuffleArray(remaining).slice(0, count - selected.length));
         }
 
         typeQuestions = selected.slice(0, count);
       } else {
-        // 随机选择指定数量的题目
         typeQuestions = shuffleArray(typeQuestions).slice(0, typeConfig.count);
       }
 
@@ -135,7 +150,7 @@ export async function POST(request: NextRequest) {
     // 检查是否有题型数量不足
     const insufficientTypes: string[] = [];
     for (const typeConfig of typeConfigs) {
-      const actualCount = selectedQuestions.filter((q: QuestionData) => q.type === typeConfig.type).length;
+      const actualCount = selectedQuestions.filter((q) => q.type === typeConfig.type).length;
       if (actualCount < typeConfig.count) {
         insufficientTypes.push(`${typeConfig.type}题(需${typeConfig.count}题，仅有${actualCount}题)`);
       }
@@ -156,10 +171,10 @@ export async function POST(request: NextRequest) {
     const downloadUrl = await generateDownloadUrl(fileKey);
 
     // 保存试卷记录到数据库
-    await supabase.from("exam_paper").insert({
+    await db.insert(examPaper).values({
       title,
       content: {
-        questions: selectedQuestions.map((q: QuestionData) => ({
+        questions: selectedQuestions.map((q) => ({
           id: q.id,
           question: q.question,
           type: q.type,
@@ -168,7 +183,7 @@ export async function POST(request: NextRequest) {
         })),
       },
       config: { typeConfigs, difficulty, subject },
-    });
+    }).execute();
 
     return NextResponse.json({
       success: true,
@@ -269,41 +284,28 @@ function generateExamDocument(title: string, questions: QuestionData[]): Documen
 
       // 选项（如果有）
       if (q.options && q.options.length > 0) {
-        q.options.forEach((option, index) => {
-          const letter = String.fromCharCode(65 + index);
+        const optionLabels = ["A", "B", "C", "D", "E", "F"];
+        q.options.forEach((opt, idx) => {
           sections.push(
             new Paragraph({
               children: [
                 new TextRun({
-                  text: `${letter}. ${option}`,
+                  text: `${optionLabels[idx]}. ${opt}`,
                   size: 24,
                 }),
               ],
-              indent: { left: 400 },
+              indent: { left: 500 },
               spacing: { after: 50 },
             })
           );
         });
       }
 
-      // 答题空间
-      sections.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: "答：_______________________________________________",
-              size: 24,
-            }),
-          ],
-          spacing: { after: 200 },
-        })
-      );
-
+      sections.push(new Paragraph({ text: "", spacing: { after: 100 } }));
       questionNumber++;
     });
   });
 
-  // 创建文档
   return new Document({
     sections: [
       {

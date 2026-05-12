@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import mammoth from "mammoth";
 import { streamLLM, extractJSON } from "@/lib/llm-adapter";
-import { getSupabaseClient } from "@/storage/database/supabase-client";
+import { getLocalDb } from "@/storage/database/local-db";
+import { questionBank, wrongQuestion } from "@/storage/database/shared/schema";
+import { inArray, eq, sql } from "drizzle-orm";
 
 export async function POST(request: NextRequest) {
   try {
@@ -70,22 +72,32 @@ ${text}`;
     }
 
     // 从题库中获取答案进行批改
-    const supabase = getSupabaseClient();
-    const { data: questions, error } = await supabase
-      .from("question_bank")
-      .select("*");
+    const db = getLocalDb();
+    const questions = await db.select().from(questionBank).execute();
 
-    if (error || !questions) {
+    if (!questions) {
       return NextResponse.json({ error: "获取题库失败" }, { status: 500 });
     }
 
     console.log("Grade exam: got", questions.length, "questions from database");
 
+    // 转换为带正确答案的格式
+    const questionsWithAnswers = questions.map((q) => ({
+      id: q.id,
+      question: q.question,
+      type: q.type,
+      difficulty: q.difficulty,
+      options: q.options,
+      correctAnswer: q.correctAnswer || q.answer,
+      explanation: q.explanation,
+      subject: q.subject,
+    }));
+
     // 使用 LLM 进行答案匹配和批改
     const gradePrompt = `你是一个阅卷老师，请根据以下题库答案批改用户的试卷答案。
 
 题库（包含正确答案）：
-${JSON.stringify(questions, null, 2)}
+${JSON.stringify(questionsWithAnswers, null, 2)}
 
 用户答案：
 ${JSON.stringify(answers, null, 2)}
@@ -143,12 +155,12 @@ ${JSON.stringify(answers, null, 2)}
     const wrongQuestionData = gradeResult.results
       .filter((r: { isCorrect: boolean }) => !r.isCorrect)
       .map((r: { questionId: number; question: string; userAnswer: string; correctAnswer: string }) => {
-        const originalQuestion = questions.find((q: { id: number }) => q.id === r.questionId);
+        const originalQuestion = questions.find((q) => q.id === r.questionId);
         return {
-          question_id: r.questionId,
+          questionId: r.questionId,
           question: r.question,
-          user_answer: r.userAnswer,
-          correct_answer: r.correctAnswer,
+          userAnswer: r.userAnswer,
+          correctAnswer: r.correctAnswer,
           type: originalQuestion?.type || "未知",
           difficulty: originalQuestion?.difficulty || 1,
           options: originalQuestion?.options || null,
@@ -159,14 +171,16 @@ ${JSON.stringify(answers, null, 2)}
 
     if (wrongQuestionData.length > 0) {
       // 获取现有错题，用于去重
-      const questionIds = wrongQuestionData.map((w: { question_id: number }) => w.question_id).filter((id: number) => id);
-      const { data: existingWrong } = await supabase
-        .from("wrong_question")
-        .select("id, question_id")
-        .in("question_id", questionIds);
+      const questionIds = wrongQuestionData.map((w: { questionId: number }) => w.questionId).filter((id: number) => id);
+      
+      const existingWrong = await db
+        .select()
+        .from(wrongQuestion)
+        .where(inArray(wrongQuestion.questionId, questionIds))
+        .execute();
 
       const existingMap = new Map(
-        (existingWrong || []).map((w: { id: number; question_id: number }) => [w.question_id, w.id])
+        existingWrong.map((w) => [w.questionId, w.id])
       );
 
       // 分离需要更新和需要插入的记录
@@ -174,11 +188,9 @@ ${JSON.stringify(answers, null, 2)}
       const toInsert: any[] = [];
 
       for (const wq of wrongQuestionData) {
-        if (wq.question_id && existingMap.has(wq.question_id)) {
-          // 已存在，记录ID用于更新计数
-          toUpdate.push(existingMap.get(wq.question_id)!);
+        if (wq.questionId && existingMap.has(wq.questionId)) {
+          toUpdate.push(existingMap.get(wq.questionId)!);
         } else {
-          // 不存在，插入新记录
           toInsert.push({
             ...wq,
             count: 1,
@@ -186,29 +198,28 @@ ${JSON.stringify(answers, null, 2)}
         }
       }
 
-      // 更新已有错题的计数（每次+1）
+      // 更新已有错题的计数
       if (toUpdate.length > 0) {
         for (const id of toUpdate) {
-          try {
-            await supabase.rpc("increment_wrong_count", { row_id: id });
-          } catch {
-            // 如果 RPC 不存在，使用普通更新
-            const { data: current } = await supabase
-              .from("wrong_question")
-              .select("count")
-              .eq("id", id)
-              .single();
-            await supabase
-              .from("wrong_question")
-              .update({ count: (current?.count || 0) + 1 })
-              .eq("id", id);
-          }
+          const current = await db
+            .select({ count: wrongQuestion.count })
+            .from(wrongQuestion)
+            .where(eq(wrongQuestion.id, id))
+            .execute();
+          
+          const newCount = (current[0]?.count || 0) + 1;
+          
+          await db
+            .update(wrongQuestion)
+            .set({ count: newCount })
+            .where(eq(wrongQuestion.id, id))
+            .execute();
         }
       }
 
       // 插入新错题
       if (toInsert.length > 0) {
-        await supabase.from("wrong_question").insert(toInsert);
+        await db.insert(wrongQuestion).values(toInsert).execute();
       }
     }
 
