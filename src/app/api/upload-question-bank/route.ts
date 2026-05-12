@@ -9,82 +9,23 @@ import { repairAndParseJSON, normalizeQuestion } from "@/lib/json-repair";
 
 // 统一题型名称映射
 const TYPE_MAPPINGS: Record<string, string> = {
-  "单选题": "单选",
-  "多选题": "多选",
-  "判断题": "判断",
-  "填空题": "填空",
-  "简答题": "简答",
+  "单选题": "单选", "单": "单选",
+  "多选题": "多选", "多": "多选",
+  "判断题": "判断", "判断": "判断", "是非题": "判断",
+  "填空题": "填空", "填空": "填空",
+  "简答题": "简答", "简答": "简答", "解答题": "简答",
 };
 
 // 有效的题型列表
 const VALID_TYPES = ["单选", "多选", "判断", "填空", "简答"];
 
-// 根据题目内容和答案格式智能推断题型
-function inferType(question: string, answer: string, options: string | null): string {
-  const q = question.trim();
-  const a = answer.trim();
-  
-  // 1. 判断题：答案只是 √/× 或 对/错/正/误
-  if (/^[√×对错正误]$/.test(a)) {
-    return "判断";
-  }
-  
-  // 2. 如果有选项（A.B.C.D.格式）
-  if (options && Array.isArray(options) && options.length >= 2) {
-    // 多选题：答案有多个选项字母（顿号、逗号或空格分隔）
-    if (/^[A-Fa-f][、,，\s]+[A-Fa-f]/.test(a)) {
-      return "多选";
-    }
-    // 单选题：答案是单个选项字母
-    if (/^[A-Fa-f]$/.test(a)) {
-      return "单选";
-    }
-  }
-  
-  // 3. 检查题目本身是否有选项格式
-  if (/[A-D][\.、．]\s*\S/.test(q) || /选项[：:]/.test(q)) {
-    // 有选项格式
-    if (/^[A-Fa-f][、,，\s]+[A-Fa-f]/.test(a)) {
-      return "多选";
-    }
-    if (/^[A-Fa-f]$/.test(a)) {
-      return "单选";
-    }
-  }
-  
-  // 4. 填空题：题目有下划线或括号填空
-  if (/_{2,}|______|【.+?】|（\s*）|\(\s*\)/.test(q)) {
-    return "填空";
-  }
-  
-  // 5. 简答题：答案较长，包含解题过程
-  if (a.length > 20 || /解[：:]|证明[：:]|答[：:]|步骤/.test(a)) {
-    return "简答";
-  }
-  
-  // 6. 默认：答案较短且无特殊格式 → 填空题
-  return "填空";
-}
-
-// 规范化题型名称（优先使用推断结果）
-function normalizeType(type: string, answer?: string, question?: string, options?: string | null): string {
-  // 优先根据题目内容推断题型
-  if (answer && question) {
-    return inferType(question, answer, options);
-  }
-  
-  const trimmed = type.trim();
-  
+// 简化版题型规范化：信任 LLM 判断，只做映射和校验
+function normalizeType(type: string): string {
+  const t = type.trim();
   // 检查映射表
-  if (TYPE_MAPPINGS[trimmed]) {
-    return TYPE_MAPPINGS[trimmed];
-  }
-  
+  if (TYPE_MAPPINGS[t]) return TYPE_MAPPINGS[t];
   // 如果已经是有效类型，直接返回
-  if (VALID_TYPES.includes(trimmed)) {
-    return trimmed;
-  }
-  
+  if (VALID_TYPES.includes(t)) return t;
   // 默认返回简答
   return "简答";
 }
@@ -251,35 +192,41 @@ export async function POST(request: NextRequest) {
       
       console.log(`Processing batch ${batchNum}/${totalBatches} with ${batch.length} questions`);
 
-      // 学科处理：优先使用用户指定的学科，否则由 LLM 识别
-      const subjectHint = normalizedUserSubject 
-        ? `（注：本题库统一学科为【${normalizedUserSubject}】）` 
-        : "";
-      
-      const prompt = `请从以下题库中提取题目和答案，返回紧凑的JSON数组格式（不要换行和缩进，节省token）。
-格式：[{"q":"题目","a":"答案","t":"题型","d":1,"o":null}]
+      const prompt = `你是题库整理助手。请从以下文本提取所有题目，返回JSON数组。
 
-【题型判断规则 - 必须严格按此顺序判断】：
-1. "判断"：答案只是 √ 或 × 或 对 或 错 或 正确 或 错误（单个判定词）
-2. "多选"：答案是多个选项字母，用顿号、逗号或空格分隔，如 "A、B、C" 或 "A,B,C" 或 "A B C"
-3. "单选"：答案是单个选项字母，如 "A" 或 "B" 或 "C" 或 "D"
-4. "填空"：题目中有 ______ 或 ____ 等下划线填空位置
-5. "简答"：有"解："、"证明："、"答："等解题过程的主观题
+字段说明：
+- q: 题目内容（包含选项，保持原格式）
+- a: 答案（保持原格式）
+- t: 题型，必须是：单选/多选/判断/填空/简答
+- d: 难度，1-3
+- o: 选项数组，如["A.xxx","B.xxx"]，非选择题填null
 
-【关键区分】：
-- 多选题答案必有多个选项字母（如：B、C 或 A、B、D）
-- 单选题答案只有一个选项字母（如：D 或 C）
-- 判断题答案只是 √/× 或 对/错（不含选项字母）
-- 填空题题目有下划线______
+示例：
 
-其他规则：
-- d是难度：1简单、2中等、3困难
-- o是选项数组，如["A.选项1","B.选项2"]，非选择题为null
-- 学科统一设为"${normalizedUserSubject || '未知'}"
-- 必须返回合法JSON，所有字符串用双引号包裹
-- 只返回JSON数组，不要任何其他文字
+输入：
+1. 地球是什么形状？（  ）
+   A.方形 B.圆形 C.三角形 D.星形
+   答案：B
 
-题库内容：
+2. 以下哪些是水果？（  ）
+   A.苹果 B.西红柿 C.香蕉 D.土豆
+   答案：A、C
+
+3. 太阳从东边升起。（  ）
+   答案：√
+
+4. 一年有____个月。
+   答案：12
+
+5. 计算：2+3=？
+   解：根据加法运算
+   答：5
+
+输出：
+[{"q":"地球是什么形状？\nA.方形 B.圆形 C.三角形 D.星形","a":"B","t":"单选","d":1,"o":["A.方形","B.圆形","C.三角形","D.星形"]},{"q":"以下哪些是水果？\nA.苹果 B.西红柿 C.香蕉 D.土豆","a":"A、C","t":"多选","d":1,"o":["A.苹果","B.西红柿","C.香蕉","D.土豆"]},{"q":"太阳从东边升起。","a":"√","t":"判断","d":1,"o":null},{"q":"一年有____个月。","a":"12","t":"填空","d":1,"o":null},{"q":"计算：2+3=？\n解：根据加法运算\n答：5","a":"5","t":"简答","d":1,"o":null}]
+
+现在请提取以下题库（学科：${normalizedUserSubject || '未知'}），只返回JSON数组：
+
 ${batchText}`;
 
       // 使用流式输出获取完整响应
@@ -328,7 +275,7 @@ ${batchText}`;
     const questionsToInsert = allQuestions.map(q => ({
       question: q.question || "",
       answer: q.answer || "",
-      type: normalizeType(q.type || "", q.answer || "", q.question || "", q.options || null),
+      type: normalizeType(q.type || ""),
       difficulty: normalizeDifficulty(q.difficulty || 1),
       options: q.options || null,
       explanation: q.explanation || null,
