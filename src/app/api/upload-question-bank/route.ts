@@ -16,10 +16,50 @@ const TYPE_MAPPINGS: Record<string, string> = {
   "简答题": "简答",
 };
 
+// 有效的题型列表
+const VALID_TYPES = ["单选", "多选", "判断", "填空", "简答"];
+
 // 规范化题型名称
-function normalizeType(type: string): string {
+function normalizeType(type: string, answer?: string): string {
   const trimmed = type.trim();
-  return TYPE_MAPPINGS[trimmed] || trimmed;
+  
+  // 先检查映射表
+  if (TYPE_MAPPINGS[trimmed]) {
+    return TYPE_MAPPINGS[trimmed];
+  }
+  
+  // 如果已经是有效类型，直接返回
+  if (VALID_TYPES.includes(trimmed)) {
+    return trimmed;
+  }
+  
+  // 类型无效时，根据答案格式推断
+  if (answer) {
+    const ans = answer.trim();
+    
+    // 判断题：答案只是 √/× 或 对/错
+    if (/^[√×对错正误]$/.test(ans)) {
+      return "判断";
+    }
+    
+    // 多选题：答案有多个选项字母（顿号、逗号或空格分隔）
+    if (/^[A-Fa-f][、,，\s]+[A-Fa-f]/.test(ans)) {
+      return "多选";
+    }
+    
+    // 单选题：答案是单个选项字母
+    if (/^[A-Fa-f]$/.test(ans)) {
+      return "单选";
+    }
+    
+    // 填空题：答案通常是数字或简短文字
+    if (ans.length < 30 && !ans.includes("解") && !ans.includes("证明")) {
+      return "填空";
+    }
+  }
+  
+  // 默认返回简答
+  return "简答";
 }
 
 // 规范化难度值（限制在1-3范围）
@@ -261,7 +301,7 @@ ${batchText}`;
     const questionsToInsert = allQuestions.map(q => ({
       question: q.question || "",
       answer: q.answer || "",
-      type: normalizeType(q.type || "简答"),
+      type: normalizeType(q.type || "", q.answer || ""),
       difficulty: normalizeDifficulty(q.difficulty || 1),
       options: q.options || null,
       explanation: q.explanation || null,
