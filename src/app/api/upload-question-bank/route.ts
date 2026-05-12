@@ -19,11 +19,63 @@ const TYPE_MAPPINGS: Record<string, string> = {
 // 有效的题型列表
 const VALID_TYPES = ["单选", "多选", "判断", "填空", "简答"];
 
-// 规范化题型名称
-function normalizeType(type: string, answer?: string): string {
+// 根据题目内容和答案格式智能推断题型
+function inferType(question: string, answer: string, options: string | null): string {
+  const q = question.trim();
+  const a = answer.trim();
+  
+  // 1. 判断题：答案只是 √/× 或 对/错/正/误
+  if (/^[√×对错正误]$/.test(a)) {
+    return "判断";
+  }
+  
+  // 2. 如果有选项（A.B.C.D.格式）
+  if (options && Array.isArray(options) && options.length >= 2) {
+    // 多选题：答案有多个选项字母（顿号、逗号或空格分隔）
+    if (/^[A-Fa-f][、,，\s]+[A-Fa-f]/.test(a)) {
+      return "多选";
+    }
+    // 单选题：答案是单个选项字母
+    if (/^[A-Fa-f]$/.test(a)) {
+      return "单选";
+    }
+  }
+  
+  // 3. 检查题目本身是否有选项格式
+  if (/[A-D][\.、．]\s*\S/.test(q) || /选项[：:]/.test(q)) {
+    // 有选项格式
+    if (/^[A-Fa-f][、,，\s]+[A-Fa-f]/.test(a)) {
+      return "多选";
+    }
+    if (/^[A-Fa-f]$/.test(a)) {
+      return "单选";
+    }
+  }
+  
+  // 4. 填空题：题目有下划线或括号填空
+  if (/_{2,}|______|【.+?】|（\s*）|\(\s*\)/.test(q)) {
+    return "填空";
+  }
+  
+  // 5. 简答题：答案较长，包含解题过程
+  if (a.length > 20 || /解[：:]|证明[：:]|答[：:]|步骤/.test(a)) {
+    return "简答";
+  }
+  
+  // 6. 默认：答案较短且无特殊格式 → 填空题
+  return "填空";
+}
+
+// 规范化题型名称（优先使用推断结果）
+function normalizeType(type: string, answer?: string, question?: string, options?: string | null): string {
+  // 优先根据题目内容推断题型
+  if (answer && question) {
+    return inferType(question, answer, options);
+  }
+  
   const trimmed = type.trim();
   
-  // 先检查映射表
+  // 检查映射表
   if (TYPE_MAPPINGS[trimmed]) {
     return TYPE_MAPPINGS[trimmed];
   }
@@ -31,31 +83,6 @@ function normalizeType(type: string, answer?: string): string {
   // 如果已经是有效类型，直接返回
   if (VALID_TYPES.includes(trimmed)) {
     return trimmed;
-  }
-  
-  // 类型无效时，根据答案格式推断
-  if (answer) {
-    const ans = answer.trim();
-    
-    // 判断题：答案只是 √/× 或 对/错
-    if (/^[√×对错正误]$/.test(ans)) {
-      return "判断";
-    }
-    
-    // 多选题：答案有多个选项字母（顿号、逗号或空格分隔）
-    if (/^[A-Fa-f][、,，\s]+[A-Fa-f]/.test(ans)) {
-      return "多选";
-    }
-    
-    // 单选题：答案是单个选项字母
-    if (/^[A-Fa-f]$/.test(ans)) {
-      return "单选";
-    }
-    
-    // 填空题：答案通常是数字或简短文字
-    if (ans.length < 30 && !ans.includes("解") && !ans.includes("证明")) {
-      return "填空";
-    }
   }
   
   // 默认返回简答
@@ -301,7 +328,7 @@ ${batchText}`;
     const questionsToInsert = allQuestions.map(q => ({
       question: q.question || "",
       answer: q.answer || "",
-      type: normalizeType(q.type || "", q.answer || ""),
+      type: normalizeType(q.type || "", q.answer || "", q.question || "", q.options || null),
       difficulty: normalizeDifficulty(q.difficulty || 1),
       options: q.options || null,
       explanation: q.explanation || null,
