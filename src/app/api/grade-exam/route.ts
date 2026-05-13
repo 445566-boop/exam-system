@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import mammoth from "mammoth";
-import { streamLLM, parseJSONWithRepair } from "@/lib/llm-adapter";
 import { getLocalDb } from "@/storage/database/local-db";
 import { questionBank, wrongQuestion } from "@/storage/database/shared/schema";
 import { inArray, eq } from "drizzle-orm";
@@ -23,62 +22,14 @@ export async function POST(request: NextRequest) {
 
     console.log("Grade exam: text extracted, length =", text.length);
 
-    // 使用 LLM 解析试卷答案
-    const parsePrompt = `请从以下试卷中提取所有题目和用户的答案。
-
-【输入试卷内容】
-${text}
-
-【输出格式要求】
-返回JSON数组，每个元素包含：
-- question: 题目内容（字符串，只保留题目主干，不要包含选项）
-- userAnswer: 用户作答内容（字符串，未作答则为空字符串""）
-
-【示例输出】
-[
-  {"question": "植物进行光合作用的场所是？", "userAnswer": "A"},
-  {"question": "人体最大的器官是？", "userAnswer": ""},
-  {"question": "简述光合作用的意义。", "userAnswer": "光合作用可以为植物提供有机物..."}
-]
-
-【注意事项】
-1. 只返回JSON数组，不要有任何其他文字
-2. 确保JSON格式正确，字段名必须是 "question" 和 "userAnswer"
-3. 如果用户没有作答，userAnswer 必须是空字符串 ""
-4. 题目内容只保留题目主干，不要包含选项内容`;
-
-    console.log("Grade exam: calling LLM to parse answers...");
-
-    // 使用流式输出获取完整响应
-    let parseResponseText = "";
-    try {
-      await streamLLM(
-        [{ role: "user", content: parsePrompt }],
-        (chunk) => {
-          parseResponseText += chunk;
-        }
-      );
-    } catch (llmError) {
-      console.error("Grade exam: LLM call failed:", llmError);
-      return NextResponse.json({ error: `LLM 调用失败: ${String(llmError)}` }, { status: 500 });
-    }
-
-    console.log("Grade exam: LLM response received, length =", parseResponseText.length);
-
-    // 解析 LLM 返回的 JSON（带修复功能）
-    let answers;
-    try {
-      answers = parseJSONWithRepair(parseResponseText);
-    } catch (e) {
-      console.error("Failed to parse LLM response:", parseResponseText.substring(0, 500));
-      return NextResponse.json({ error: "试卷解析失败，请检查试卷格式" }, { status: 400 });
-    }
-
-    if (!Array.isArray(answers) || answers.length === 0) {
-      return NextResponse.json({ error: "未能从试卷中提取到答案" }, { status: 400 });
-    }
+    // 使用正则直接解析试卷（不依赖 LLM）
+    const answers = parseExamWithRegex(text);
 
     console.log("Grade exam: extracted", answers.length, "answers from exam");
+
+    if (answers.length === 0) {
+      return NextResponse.json({ error: "未能从试卷中提取到题目" }, { status: 400 });
+    }
 
     // 从题库中获取答案进行批改
     const db = getLocalDb();
@@ -90,126 +41,83 @@ ${text}
 
     console.log("Grade exam: got", questions.length, "questions from database");
 
-    // 本地匹配题目，只提取相关的题目
-    const matchedQuestions: Array<{
-      id: number;
+    // 匹配题目并批改
+    const results: Array<{
+      questionId: number;
       question: string;
+      userAnswer: string;
+      correctAnswer: string | null;
+      isCorrect: boolean;
       type: string;
       difficulty: number | null;
       options: any;
-      correctAnswer: string | null;
       explanation: string | null;
       subject: string | null;
-      userAnswer: string;
     }> = [];
 
     for (const answer of answers) {
-      // 尝试匹配题目（模糊匹配）
-      const questionText = answer.question.replace(/\s+/g, "").toLowerCase();
+      // 模糊匹配题目
+      const matched = findMatchingQuestion(answer.question, questions);
       
-      // 先尝试精确匹配
-      let matched = questions.find(q => 
-        q.question.replace(/\s+/g, "").toLowerCase() === questionText
-      );
-      
-      // 如果精确匹配失败，尝试部分匹配（题目开头）
-      if (!matched) {
-        matched = questions.find(q => 
-          q.question.replace(/\s+/g, "").toLowerCase().includes(questionText.substring(0, Math.min(20, questionText.length)))
-        );
-      }
-      
-      // 如果还是匹配失败，尝试反向匹配
-      if (!matched) {
-        matched = questions.find(q => 
-          questionText.includes(q.question.replace(/\s+/g, "").toLowerCase().substring(0, Math.min(20, q.question.length)))
-        );
-      }
-
       if (matched) {
-        matchedQuestions.push({
-          id: matched.id,
+        const userAnswer = (answer.userAnswer || "").trim();
+        const correctAnswer = (matched.correctAnswer || matched.answer || "").trim();
+        
+        let isCorrect = false;
+        
+        if (matched.type === "单选" || matched.type === "多选") {
+          // 选择题：比较选项（大小写不敏感）
+          isCorrect = userAnswer.toUpperCase() === correctAnswer.toUpperCase();
+        } else if (matched.type === "判断") {
+          // 判断题：标准化答案后比较
+          const normalize = (ans: string) => {
+            const a = ans.toUpperCase();
+            if (["对", "正确", "√", "T", "TRUE", "YES"].includes(a)) return "正确";
+            if (["错", "错误", "×", "F", "FALSE", "NO"].includes(a)) return "错误";
+            return a;
+          };
+          isCorrect = normalize(userAnswer) === normalize(correctAnswer);
+        } else if (matched.type === "填空") {
+          // 填空题：关键词匹配
+          isCorrect = userAnswer.length > 0 && correctAnswer.includes(userAnswer);
+        } else if (matched.type === "简答") {
+          // 简答题：检查是否有实质内容
+          isCorrect = userAnswer.length > 10;
+        } else {
+          isCorrect = userAnswer === correctAnswer;
+        }
+
+        results.push({
+          questionId: matched.id,
           question: matched.question,
+          userAnswer,
+          correctAnswer,
+          isCorrect,
           type: matched.type,
           difficulty: matched.difficulty,
           options: matched.options,
-          correctAnswer: matched.correctAnswer || matched.answer,
           explanation: matched.explanation,
           subject: matched.subject,
-          userAnswer: answer.userAnswer || "",
         });
+      } else {
+        // 未匹配到的题目也记录
+        console.log("Grade exam: unmatched question:", answer.question.substring(0, 50));
       }
     }
 
-    console.log("Grade exam: matched", matchedQuestions.length, "questions from database");
+    console.log("Grade exam: matched", results.length, "questions from database");
 
-    if (matchedQuestions.length === 0) {
+    if (results.length === 0) {
       return NextResponse.json({ error: "未能匹配到题库中的题目" }, { status: 400 });
     }
-
-    // 本地批改（不再使用 LLM 批改，避免输出过长）
-    const results = matchedQuestions.map((q) => {
-      const userAnswer = (q.userAnswer || "").trim().toUpperCase();
-      const correctAnswer = (q.correctAnswer || "").trim().toUpperCase();
-      
-      let isCorrect = false;
-      
-      if (q.type === "单选" || q.type === "多选") {
-        // 选择题：比较选项
-        isCorrect = userAnswer === correctAnswer;
-      } else if (q.type === "判断") {
-        // 判断题：标准化答案后比较
-        const normalizeAnswer = (ans: string) => {
-          if (["对", "正确", "√", "T", "TRUE", "YES"].includes(ans.toUpperCase())) return "正确";
-          if (["错", "错误", "×", "F", "FALSE", "NO"].includes(ans.toUpperCase())) return "错误";
-          return ans;
-        };
-        isCorrect = normalizeAnswer(userAnswer) === normalizeAnswer(correctAnswer);
-      } else if (q.type === "填空") {
-        // 填空题：关键词匹配
-        isCorrect = userAnswer.length > 0 && correctAnswer.includes(userAnswer);
-      } else if (q.type === "简答") {
-        // 简答题：检查是否有实质内容
-        isCorrect = userAnswer.length > 10;
-      } else {
-        // 其他类型：直接比较
-        isCorrect = userAnswer === correctAnswer;
-      }
-
-      return {
-        questionId: q.id,
-        question: q.question,
-        userAnswer: q.userAnswer,
-        correctAnswer: q.correctAnswer,
-        isCorrect,
-        type: q.type,
-        difficulty: q.difficulty,
-        options: q.options,
-        explanation: q.explanation,
-        subject: q.subject,
-      };
-    });
 
     const score = results.filter((r) => r.isCorrect).length;
     const total = results.length;
 
-    // 保存错题到错题集（带去重和计数逻辑）
-    const wrongQuestionData = results
-      .filter((r) => !r.isCorrect)
-      .map((r) => ({
-        questionId: r.questionId,
-        question: r.question,
-        userAnswer: r.userAnswer,
-        correctAnswer: r.correctAnswer,
-        type: r.type,
-        difficulty: r.difficulty,
-        options: r.options,
-        explanation: r.explanation,
-        subject: r.subject,
-      }));
+    // 保存错题到错题集
+    const wrongQuestionData = results.filter((r) => !r.isCorrect);
 
     if (wrongQuestionData.length > 0) {
-      // 获取现有错题，用于去重
       const questionIds = wrongQuestionData.map((w) => w.questionId).filter((id) => id);
       
       const existingWrong = await db
@@ -222,7 +130,6 @@ ${text}
         existingWrong.map((w) => [w.questionId, w.id])
       );
 
-      // 分离需要更新和需要插入的记录
       const toUpdate: number[] = [];
       const toInsert: any[] = [];
 
@@ -231,7 +138,15 @@ ${text}
           toUpdate.push(existingMap.get(wq.questionId)!);
         } else {
           toInsert.push({
-            ...wq,
+            questionId: wq.questionId,
+            question: wq.question,
+            userAnswer: wq.userAnswer,
+            correctAnswer: wq.correctAnswer,
+            type: wq.type,
+            difficulty: wq.difficulty,
+            options: wq.options,
+            explanation: wq.explanation,
+            subject: wq.subject,
             count: 1,
           });
         }
@@ -283,4 +198,126 @@ ${text}
       { status: 500 }
     );
   }
+}
+
+// 正则解析试卷
+function parseExamWithRegex(text: string): Array<{ question: string; userAnswer: string }> {
+  const results: Array<{ question: string; userAnswer: string }> = [];
+  
+  // 分割题目（以 "数字. " 开头的行为新题目）
+  // 格式: "1. 题目内容..."
+  const questionPattern = /(\d+)\.\s+(.+?)(?=\n\d+\.\s|\n答案[：:(]|$)/gs;
+  
+  // 提取答案的模式
+  // 格式: "答案：（ X ）" 或 "答案：（）" 或 "答案：____"
+  const answerPattern = /答案[：:]\s*[（(]\s*([A-Fa-f对错正确错误√×]?)\s*[)）]/;
+  const answerPattern2 = /答案[：:]\s*_{2,}/;  // 填空题横线
+  const answerPattern3 = /答案[：:]\s*(.+)/;   // 其他格式
+  
+  // 按题目编号分割
+  const lines = text.split('\n');
+  let currentQuestion = "";
+  let currentAnswer = "";
+  let inQuestion = false;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    // 检查是否是新题目（数字. 开头）
+    const questionMatch = line.match(/^(\d+)\.\s+(.+)$/);
+    
+    if (questionMatch) {
+      // 保存上一道题
+      if (currentQuestion) {
+        results.push({
+          question: currentQuestion.trim(),
+          userAnswer: currentAnswer.trim(),
+        });
+      }
+      
+      // 开始新题目
+      currentQuestion = questionMatch[2];
+      currentAnswer = "";
+      inQuestion = true;
+      
+    } else if (inQuestion) {
+      // 检查是否是答案行
+      if (line.startsWith('答案')) {
+        const match1 = line.match(answerPattern);
+        const match3 = line.match(answerPattern3);
+        
+        if (match1) {
+          currentAnswer = match1[1].toUpperCase();
+        } else if (line.match(answerPattern2)) {
+          currentAnswer = "";  // 填空题未作答
+        } else if (match3) {
+          currentAnswer = match3[1].trim();
+        }
+      } else if (!line.startsWith('A.') && !line.startsWith('B.') && 
+                 !line.startsWith('C.') && !line.startsWith('D.') &&
+                 !line.startsWith('答案') && line.length > 0) {
+        // 继续追加题目内容（排除选项和答案行）
+        // 但要避免追加题型标题（如"单选题"）
+        if (!line.includes('题（共') && !line.includes('题(共')) {
+          currentQuestion += " " + line;
+        }
+      }
+    }
+  }
+  
+  // 保存最后一道题
+  if (currentQuestion) {
+    results.push({
+      question: currentQuestion.trim(),
+      userAnswer: currentAnswer.trim(),
+    });
+  }
+  
+  return results;
+}
+
+// 模糊匹配题目
+function findMatchingQuestion(
+  questionText: string,
+  questions: any[]
+): any | null {
+  // 清理题目文本
+  const cleanText = questionText
+    .replace(/\s+/g, "")
+    .replace(/[？?！!。，,；;：:]/g, "")
+    .toLowerCase();
+  
+  // 1. 精确匹配
+  let matched = questions.find(q => {
+    const qText = q.question
+      .replace(/\s+/g, "")
+      .replace(/[？?！!。，,；;：:]/g, "")
+      .toLowerCase();
+    return qText === cleanText;
+  });
+  
+  // 2. 部分匹配（题目开头）
+  if (!matched) {
+    const prefix = cleanText.substring(0, Math.min(30, cleanText.length));
+    matched = questions.find(q => {
+      const qText = q.question
+        .replace(/\s+/g, "")
+        .replace(/[？?！!。，,；;：:]/g, "")
+        .toLowerCase();
+      return qText.includes(prefix) || prefix.includes(qText.substring(0, Math.min(30, qText.length)));
+    });
+  }
+  
+  // 3. 关键词匹配
+  if (!matched) {
+    const keywords = cleanText.split(/[，,。、]/).filter(k => k.length >= 4);
+    if (keywords.length > 0) {
+      matched = questions.find(q => {
+        const qText = q.question.replace(/\s+/g, "").toLowerCase();
+        return keywords.some(k => qText.includes(k));
+      });
+    }
+  }
+  
+  return matched || null;
 }
