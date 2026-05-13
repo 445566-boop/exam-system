@@ -3,7 +3,7 @@ import mammoth from "mammoth";
 import { streamLLM, parseJSONWithRepair } from "@/lib/llm-adapter";
 import { getLocalDb } from "@/storage/database/local-db";
 import { questionBank, wrongQuestion } from "@/storage/database/shared/schema";
-import { inArray, eq, sql } from "drizzle-orm";
+import { inArray, eq } from "drizzle-orm";
 
 export async function POST(request: NextRequest) {
   try {
@@ -31,7 +31,7 @@ ${text}
 
 【输出格式要求】
 返回JSON数组，每个元素包含：
-- question: 题目内容（字符串）
+- question: 题目内容（字符串，只保留题目主干，不要包含选项）
 - userAnswer: 用户作答内容（字符串，未作答则为空字符串""）
 
 【示例输出】
@@ -45,7 +45,7 @@ ${text}
 1. 只返回JSON数组，不要有任何其他文字
 2. 确保JSON格式正确，字段名必须是 "question" 和 "userAnswer"
 3. 如果用户没有作答，userAnswer 必须是空字符串 ""
-4. 题目内容要完整提取，不要遗漏`;
+4. 题目内容只保留题目主干，不要包含选项内容`;
 
     console.log("Grade exam: calling LLM to parse answers...");
 
@@ -78,6 +78,8 @@ ${text}
       return NextResponse.json({ error: "未能从试卷中提取到答案" }, { status: 400 });
     }
 
+    console.log("Grade exam: extracted", answers.length, "answers from exam");
+
     // 从题库中获取答案进行批改
     const db = getLocalDb();
     const questions = await db.select().from(questionBank).execute();
@@ -88,96 +90,127 @@ ${text}
 
     console.log("Grade exam: got", questions.length, "questions from database");
 
-    // 转换为带正确答案的格式
-    const questionsWithAnswers = questions.map((q) => ({
-      id: q.id,
-      question: q.question,
-      type: q.type,
-      difficulty: q.difficulty,
-      options: q.options,
-      correctAnswer: q.correctAnswer || q.answer,
-      explanation: q.explanation,
-      subject: q.subject,
-    }));
+    // 本地匹配题目，只提取相关的题目
+    const matchedQuestions: Array<{
+      id: number;
+      question: string;
+      type: string;
+      difficulty: number | null;
+      options: any;
+      correctAnswer: string | null;
+      explanation: string | null;
+      subject: string | null;
+      userAnswer: string;
+    }> = [];
 
-    // 使用 LLM 进行答案匹配和批改
-    const gradePrompt = `你是一个阅卷老师，请根据以下题库答案批改用户的试卷答案。
-
-题库（包含正确答案）：
-${JSON.stringify(questionsWithAnswers, null, 2)}
-
-用户答案：
-${JSON.stringify(answers, null, 2)}
-
-请按以下JSON格式返回批改结果：
-{
-  "results": [
-    {
-      "question": "题目内容",
-      "userAnswer": "用户答案",
-      "correctAnswer": "正确答案",
-      "isCorrect": true/false,
-      "questionId": 题目ID（从题库中匹配）
-    }
-  ],
-  "score": 得分,
-  "total": 总题数
-}
-
-注意：
-1. 对于选择题，判断用户答案是否与正确答案一致（忽略大小写和空格）
-2. 对于判断题，"对"/"正确"/"√" 都算正确，"错"/"错误"/"×" 都算错误
-3. 对于填空题和简答题，判断关键词是否匹配
-4. 只返回JSON，不要有其他内容`;
-
-    console.log("Grade exam: calling LLM to grade...");
-
-    // 使用流式输出获取完整响应
-    let gradeResponseText = "";
-    try {
-      await streamLLM(
-        [{ role: "user", content: gradePrompt }],
-        (chunk) => {
-          gradeResponseText += chunk;
-        }
+    for (const answer of answers) {
+      // 尝试匹配题目（模糊匹配）
+      const questionText = answer.question.replace(/\s+/g, "").toLowerCase();
+      
+      // 先尝试精确匹配
+      let matched = questions.find(q => 
+        q.question.replace(/\s+/g, "").toLowerCase() === questionText
       );
-    } catch (llmError) {
-      console.error("Grade exam: LLM grading failed:", llmError);
-      return NextResponse.json({ error: `批改失败: ${String(llmError)}` }, { status: 500 });
+      
+      // 如果精确匹配失败，尝试部分匹配（题目开头）
+      if (!matched) {
+        matched = questions.find(q => 
+          q.question.replace(/\s+/g, "").toLowerCase().includes(questionText.substring(0, Math.min(20, questionText.length)))
+        );
+      }
+      
+      // 如果还是匹配失败，尝试反向匹配
+      if (!matched) {
+        matched = questions.find(q => 
+          questionText.includes(q.question.replace(/\s+/g, "").toLowerCase().substring(0, Math.min(20, q.question.length)))
+        );
+      }
+
+      if (matched) {
+        matchedQuestions.push({
+          id: matched.id,
+          question: matched.question,
+          type: matched.type,
+          difficulty: matched.difficulty,
+          options: matched.options,
+          correctAnswer: matched.correctAnswer || matched.answer,
+          explanation: matched.explanation,
+          subject: matched.subject,
+          userAnswer: answer.userAnswer || "",
+        });
+      }
     }
 
-    console.log("Grade exam: grading response received, length =", gradeResponseText.length);
+    console.log("Grade exam: matched", matchedQuestions.length, "questions from database");
 
-    // 解析批改结果（带修复功能）
-    let gradeResult;
-    try {
-      gradeResult = parseJSONWithRepair(gradeResponseText);
-    } catch (e) {
-      console.error("Failed to parse grade response:", gradeResponseText.substring(0, 500));
-      return NextResponse.json({ error: "批改失败，请重试" }, { status: 500 });
+    if (matchedQuestions.length === 0) {
+      return NextResponse.json({ error: "未能匹配到题库中的题目" }, { status: 400 });
     }
+
+    // 本地批改（不再使用 LLM 批改，避免输出过长）
+    const results = matchedQuestions.map((q) => {
+      const userAnswer = (q.userAnswer || "").trim().toUpperCase();
+      const correctAnswer = (q.correctAnswer || "").trim().toUpperCase();
+      
+      let isCorrect = false;
+      
+      if (q.type === "单选" || q.type === "多选") {
+        // 选择题：比较选项
+        isCorrect = userAnswer === correctAnswer;
+      } else if (q.type === "判断") {
+        // 判断题：标准化答案后比较
+        const normalizeAnswer = (ans: string) => {
+          if (["对", "正确", "√", "T", "TRUE", "YES"].includes(ans.toUpperCase())) return "正确";
+          if (["错", "错误", "×", "F", "FALSE", "NO"].includes(ans.toUpperCase())) return "错误";
+          return ans;
+        };
+        isCorrect = normalizeAnswer(userAnswer) === normalizeAnswer(correctAnswer);
+      } else if (q.type === "填空") {
+        // 填空题：关键词匹配
+        isCorrect = userAnswer.length > 0 && correctAnswer.includes(userAnswer);
+      } else if (q.type === "简答") {
+        // 简答题：检查是否有实质内容
+        isCorrect = userAnswer.length > 10;
+      } else {
+        // 其他类型：直接比较
+        isCorrect = userAnswer === correctAnswer;
+      }
+
+      return {
+        questionId: q.id,
+        question: q.question,
+        userAnswer: q.userAnswer,
+        correctAnswer: q.correctAnswer,
+        isCorrect,
+        type: q.type,
+        difficulty: q.difficulty,
+        options: q.options,
+        explanation: q.explanation,
+        subject: q.subject,
+      };
+    });
+
+    const score = results.filter((r) => r.isCorrect).length;
+    const total = results.length;
 
     // 保存错题到错题集（带去重和计数逻辑）
-    const wrongQuestionData = gradeResult.results
-      .filter((r: { isCorrect: boolean }) => !r.isCorrect)
-      .map((r: { questionId: number; question: string; userAnswer: string; correctAnswer: string }) => {
-        const originalQuestion = questions.find((q) => q.id === r.questionId);
-        return {
-          questionId: r.questionId,
-          question: r.question,
-          userAnswer: r.userAnswer,
-          correctAnswer: r.correctAnswer,
-          type: originalQuestion?.type || "未知",
-          difficulty: originalQuestion?.difficulty || 1,
-          options: originalQuestion?.options || null,
-          explanation: originalQuestion?.explanation || null,
-          subject: originalQuestion?.subject || null,
-        };
-      });
+    const wrongQuestionData = results
+      .filter((r) => !r.isCorrect)
+      .map((r) => ({
+        questionId: r.questionId,
+        question: r.question,
+        userAnswer: r.userAnswer,
+        correctAnswer: r.correctAnswer,
+        type: r.type,
+        difficulty: r.difficulty,
+        options: r.options,
+        explanation: r.explanation,
+        subject: r.subject,
+      }));
 
     if (wrongQuestionData.length > 0) {
       // 获取现有错题，用于去重
-      const questionIds = wrongQuestionData.map((w: { questionId: number }) => w.questionId).filter((id: number) => id);
+      const questionIds = wrongQuestionData.map((w) => w.questionId).filter((id) => id);
       
       const existingWrong = await db
         .select()
@@ -229,14 +262,14 @@ ${JSON.stringify(answers, null, 2)}
       }
     }
 
-    console.log("Grade exam: completed, score =", gradeResult.score);
+    console.log("Grade exam: completed, score =", score, "/", total);
 
     return NextResponse.json({
-      score: gradeResult.score,
-      total: gradeResult.total,
-      correct: gradeResult.results.filter((r: { isCorrect: boolean }) => r.isCorrect).length,
+      score,
+      total,
+      correct: score,
       wrong: wrongQuestionData.length,
-      details: gradeResult.results.map((r: { question: string; userAnswer: string; correctAnswer: string; isCorrect: boolean }) => ({
+      details: results.map((r) => ({
         question: r.question,
         userAnswer: r.userAnswer,
         correctAnswer: r.correctAnswer,
