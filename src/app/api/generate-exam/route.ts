@@ -304,7 +304,51 @@ function generateExamDocument(title: string, questions: QuestionData[]): Documen
         });
       }
 
-      sections.push(new Paragraph({ text: "", spacing: { after: 100 } }));
+      // 答题区域
+      if (type === "填空") {
+        // 填空题：添加答题横线
+        sections.push(
+          new Paragraph({
+            children: [new TextRun({ text: "答案：____________________", size: 24 })],
+            spacing: { before: 100, after: 200 },
+          })
+        );
+      } else if (type === "简答") {
+        // 简答题：添加答题空间
+        sections.push(
+          new Paragraph({
+            children: [new TextRun({ text: "答案：", size: 24 })],
+            spacing: { before: 100 },
+          })
+        );
+        // 添加多行空白答题区域
+        for (let i = 0; i < 4; i++) {
+          sections.push(
+            new Paragraph({
+              children: [new TextRun({ text: "________________________________________________________________________", size: 24 })],
+              spacing: { after: 100 },
+            })
+          );
+        }
+        sections.push(new Paragraph({ text: "", spacing: { after: 100 } }));
+      } else if (type === "判断") {
+        // 判断题：添加选择括号
+        sections.push(
+          new Paragraph({
+            children: [new TextRun({ text: "答案：（    ）", size: 24 })],
+            spacing: { before: 100, after: 200 },
+          })
+        );
+      } else {
+        // 单选/多选：添加答题括号
+        sections.push(
+          new Paragraph({
+            children: [new TextRun({ text: "答案：（    ）", size: 24 })],
+            spacing: { before: 100, after: 200 },
+          })
+        );
+      }
+
       questionNumber++;
     });
   });
