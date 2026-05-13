@@ -284,13 +284,16 @@ function generateExamDocument(title: string, questions: QuestionData[]): Documen
 
       // 选项（如果有）
       if (q.options && q.options.length > 0) {
-        const optionLabels = ["A", "B", "C", "D", "E", "F"];
-        q.options.forEach((opt, idx) => {
+        q.options.forEach((opt) => {
+          // 检查选项是否已经包含 A/B/C/D 前缀
+          const hasPrefix = /^[A-F][.、．]/i.test(opt.trim());
+          const displayText = hasPrefix ? opt : opt;
+
           sections.push(
             new Paragraph({
               children: [
                 new TextRun({
-                  text: `${optionLabels[idx]}. ${opt}`,
+                  text: displayText,
                   size: 24,
                 }),
               ],
