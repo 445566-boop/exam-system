@@ -134,10 +134,7 @@ function findLastCompleteObject(str: string): number {
 function repairCommonIssues(jsonStr: string): string {
   let repaired = jsonStr;
   
-  // 1. 修复未转义的引号（简单处理）
-  // 这个比较复杂，暂时跳过
-  
-  // 2. 修复中文标点
+  // 1. 修复中文标点（必须在前面处理）
   repaired = repaired
     .replace(/：/g, ':')
     .replace(/，/g, ',')
@@ -152,17 +149,37 @@ function repairCommonIssues(jsonStr: string): string {
     .replace(/（/g, '(')
     .replace(/）/g, ')');
   
-  // 3. 移除控制字符
+  // 2. 修复缺少引号的字段名（如 {q: -> {"q":）
+  repaired = repaired.replace(/\{\s*([a-zA-Z])\s*:/g, '{"$1":');
+  repaired = repaired.replace(/,\s*([a-zA-Z])\s*:/g, ',"$1":');
+  
+  // 3. 修复字段名后缺少冒号的情况（如 "q "xxx" -> "q":"xxx"）
+  repaired = repaired.replace(/"([a-zA-Z])"\s+"([^"]*)"/g, '"$1":"$2"');
+  
+  // 4. 修复缺少引号的字符串值
+  // 如 "t":单选 -> "t":"单选"
+  repaired = repaired.replace(/"([a-zA-Z])":\s*([^"\[\{][^,}\]]*)([,\}])/g, (match, key, value, end) => {
+    const trimmed = value.trim();
+    if (/^\d+$/.test(trimmed) || trimmed === 'null' || trimmed === 'true' || trimmed === 'false') {
+      return match; // 数字或布尔值不需要引号
+    }
+    return `"${key}":"${trimmed}"${end}`;
+  });
+  
+  // 5. 移除控制字符
   repaired = repaired.replace(/[\x00-\x1F\x7F]/g, (char) => {
     if (char === '\n' || char === '\r' || char === '\t') return char;
     return '';
   });
   
-  // 4. 修复尾随逗号
+  // 6. 修复尾随逗号
   repaired = repaired.replace(/,(\s*[}\]])/g, '$1');
   
-  // 5. 修复缺失的逗号（对象之间）
-  // repaired = repaired.replace(/\}\s*\{/g, '},{');
+  // 7. 修复对象之间缺少逗号
+  repaired = repaired.replace(/\}\s*\{/g, '},{');
+  
+  // 8. 修复数组元素之间缺少逗号
+  repaired = repaired.replace(/"\s*\n\s*"/g, '",\n"');
   
   return repaired;
 }
@@ -315,18 +332,14 @@ function extractStandardObjects(jsonStr: string): any[] {
 function extractWithRegex(text: string): any[] {
   const objects: any[] = [];
   
-  // 匹配题目对象，支持格式不规范的 JSON
-  // 例如：{"q":"题目","a":"答案"...} 或 {"q题目","a":"答案"...}
-  const objectPattern = /\{[^{}]*"q"[^{}]*\}|\{[^{}]*"a"[^{}]*\}/g;
-  const matches = text.match(objectPattern) || [];
+  // 方法1：尝试匹配完整的对象结构
+  // 匹配 {"q":"...","a":"...","t":"...","d":1,"o":[...]} 格式
+  const fullObjectPattern = /\{"[^"]*"[^}]*\}/g;
+  let matches = text.match(fullObjectPattern) || [];
   
   for (const match of matches) {
     try {
-      // 尝试修复格式
       let fixed = match;
-      
-      // 修复缺少冒号后的引号：{"q题目 -> {"q":"题目
-      fixed = fixed.replace(/"([qatdos])"([^{:,}]+)/g, '"$1":"$2"');
       
       // 修复中文标点
       fixed = fixed
@@ -334,6 +347,13 @@ function extractWithRegex(text: string): any[] {
         .replace(/，/g, ',')
         .replace(/"/g, '"')
         .replace(/"/g, '"');
+      
+      // 修复缺少引号的字段名
+      fixed = fixed.replace(/\{([a-zA-Z]):/g, '{"$1":');
+      fixed = fixed.replace(/,([a-zA-Z]):/g, ',"$1":');
+      
+      // 修复缺少引号的值
+      fixed = fixed.replace(/"([a-zA-Z])":([^"\[\{][^,}\]]*)([,\}])/g, '"$1":"$2"$3');
       
       // 修复尾随逗号
       fixed = fixed.replace(/,(\s*})/g, '$1');
@@ -343,18 +363,48 @@ function extractWithRegex(text: string): any[] {
         objects.push(obj);
       }
     } catch (e) {
-      // 尝试更宽松的提取
-      const qMatch = match.match(/"q"\s*[:：]\s*"?([^",}]+)"?/);
-      const aMatch = match.match(/"a"\s*[:：]\s*"?([^",}]+)"?/);
-      const tMatch = match.match(/"t"\s*[:：]\s*"?([^",}]+)"?/);
-      const dMatch = match.match(/"d"\s*[:：]\s*(\d)/);
-      
-      if (qMatch && aMatch) {
+      // 继续尝试其他方法
+    }
+  }
+  
+  // 方法2：提取关键字段并重建对象
+  if (objects.length < 3) {
+    // 尝试提取题目、答案、题型
+    const questionPattern = /["']?q["']?\s*[:：]\s*["']([^"']+)["']/g;
+    const answerPattern = /["']?a["']?\s*[:：]\s*["']?([^"',}\]]+)["']?/g;
+    const typePattern = /["']?t["']?\s*[:：]\s*["']?([^"',}\]]+)["']?/g;
+    const diffPattern = /["']?d["']?\s*[:：]\s*(\d)/g;
+    
+    // 收集所有匹配
+    const questions: string[] = [];
+    const answers: string[] = [];
+    const types: string[] = [];
+    const diffs: number[] = [];
+    
+    let qMatch, aMatch, tMatch, dMatch;
+    
+    while ((qMatch = questionPattern.exec(text)) !== null) {
+      questions.push(qMatch[1].trim());
+    }
+    while ((aMatch = answerPattern.exec(text)) !== null) {
+      answers.push(aMatch[1].trim());
+    }
+    while ((tMatch = typePattern.exec(text)) !== null) {
+      types.push(tMatch[1].trim());
+    }
+    while ((dMatch = diffPattern.exec(text)) !== null) {
+      diffs.push(parseInt(dMatch[1]));
+    }
+    
+    // 根据题目数量重建对象
+    const count = Math.min(questions.length, answers.length);
+    for (let i = 0; i < count; i++) {
+      if (questions[i] && answers[i]) {
         objects.push({
-          q: qMatch[1].trim(),
-          a: aMatch[1].trim(),
-          t: tMatch ? tMatch[1].trim() : '简答',
-          d: dMatch ? parseInt(dMatch[1]) : 2,
+          q: questions[i],
+          a: answers[i],
+          t: types[i] || '填空',
+          d: diffs[i] || 1,
           o: null
         });
       }
