@@ -41,8 +41,23 @@ export async function GET(request: NextRequest) {
       subjectCounts[s] = Number(item.count);
     });
 
+    // 转换字段名为前端期望的下划线格式
+    const formattedQuestions = questions.map((q) => ({
+      id: q.id,
+      question: q.question,
+      user_answer: q.userAnswer,
+      correct_answer: q.correctAnswer,
+      type: q.type,
+      difficulty: q.difficulty,
+      options: q.options,
+      explanation: q.explanation,
+      subject: q.subject,
+      count: q.count,
+      created_at: q.createdAt,
+    }));
+
     return NextResponse.json({ 
-      questions,
+      questions: formattedQuestions,
       subjects: subjectCounts
     });
   } catch (error) {
