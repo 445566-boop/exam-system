@@ -162,7 +162,17 @@ function repairCommonIssues(jsonStr: string): string {
   repaired = repaired.replace(/,(\s*[}\]])/g, '$1');
   
   // 5. 修复缺失的逗号（对象之间）
-  // repaired = repaired.replace(/\}\s*\{/g, '},{');
+  repaired = repaired.replace(/\}\s*\{/g, '},{');
+  
+  // 6. 修复属性名缺少引号（如 {q:"题目"} -> {"q":"题目"}）
+  // 修复对象开头的属性名
+  repaired = repaired.replace(/\{\s*([a-zA-Z])\s*:/g, '{ "$1":');
+  // 修复逗号后的属性名
+  repaired = repaired.replace(/,\s*([a-zA-Z])\s*:/g, ', "$1":');
+  
+  // 7. 修复属性值后缺少逗号（如 "a":"答案" "q":"题目" -> "a":"答案", "q":"题目"）
+  repaired = repaired.replace(/"\s*\n\s*"/g, '",\n"');
+  repaired = repaired.replace(/"\s+([a-zA-Z])\s*:/g, '", "$1":');
   
   return repaired;
 }
