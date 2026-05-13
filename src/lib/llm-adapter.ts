@@ -132,3 +132,97 @@ export function extractJSON(text: string): string {
   
   return cleaned.trim();
 }
+
+/**
+ * 修复常见的 JSON 格式错误
+ */
+export function repairJSON(text: string): string {
+  let repaired = text;
+  
+  // 修复字段名不一致的问题 (Answer -> userAnswer)
+  repaired = repaired.replace(/"Answer"\s*:/g, '"userAnswer":');
+  repaired = repaired.replace(/"answer"\s*:/g, '"userAnswer":');
+  
+  // 修复字段名后多余的空格 (如 "question " -> "question")
+  repaired = repaired.replace(/"(\w+)"\s*:/g, '"$1":');
+  
+  // 修复缺少引号的字段名
+  repaired = repaired.replace(/\{\s*([^"]\w+)\s*:/g, '{"$1":');
+  repaired = repaired.replace(/,\s*([^"]\w+)\s*:/g, ',"$1":');
+  
+  // 修复缺少的逗号
+  repaired = repaired.replace(/\}\s*\{/g, '},{');
+  repaired = repaired.replace(/"\s*\{/g, '",{');
+  repaired = repaired.replace(/\}\s*"/g, '},"');
+  
+  // 修复缺少的右括号/右方括号
+  const openBraces = (repaired.match(/\{/g) || []).length;
+  const closeBraces = (repaired.match(/\}/g) || []).length;
+  const openBrackets = (repaired.match(/\[/g) || []).length;
+  const closeBrackets = (repaired.match(/\]/g) || []).length;
+  
+  // 补充缺少的闭合符号
+  for (let i = 0; i < openBraces - closeBraces; i++) {
+    repaired += '}';
+  }
+  for (let i = 0; i < openBrackets - closeBrackets; i++) {
+    repaired += ']';
+  }
+  
+  // 尝试移除末尾不完整的部分
+  // 找到最后一个完整的对象
+  const lastCompleteObject = repaired.lastIndexOf('"}');
+  if (lastCompleteObject > 0 && lastCompleteObject < repaired.length - 2) {
+    // 检查是否在数组中
+    const trimmed = repaired.substring(0, lastCompleteObject + 2);
+    // 确保数组正确闭合
+    if (trimmed.startsWith('[') && !trimmed.endsWith(']')) {
+      return trimmed + ']';
+    }
+    return trimmed;
+  }
+  
+  return repaired;
+}
+
+/**
+ * 尝试解析 JSON，带有修复功能
+ */
+export function parseJSONWithRepair(text: string): any {
+  const extracted = extractJSON(text);
+  
+  try {
+    return JSON.parse(extracted);
+  } catch (e) {
+    // 尝试修复后解析
+    const repaired = repairJSON(extracted);
+    try {
+      return JSON.parse(repaired);
+    } catch (e2) {
+      // 最后尝试：逐个对象解析
+      try {
+        // 对于数组，尝试逐个解析元素
+        if (repaired.startsWith('[')) {
+          const items: any[] = [];
+          // 使用正则匹配每个对象
+          const objectRegex = /\{[^{}]*"question"[^{}]*\}/g;
+          let match;
+          while ((match = objectRegex.exec(repaired)) !== null) {
+            try {
+              const obj = JSON.parse(match[0]);
+              items.push(obj);
+            } catch {
+              // 跳过无法解析的对象
+            }
+          }
+          if (items.length > 0) {
+            return items;
+          }
+        }
+      } catch (e3) {
+        // 放弃
+      }
+      throw e;
+    }
+  }
+}

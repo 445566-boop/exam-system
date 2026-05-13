@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import mammoth from "mammoth";
-import { streamLLM, extractJSON } from "@/lib/llm-adapter";
+import { streamLLM, parseJSONWithRepair } from "@/lib/llm-adapter";
 import { getLocalDb } from "@/storage/database/local-db";
 import { questionBank, wrongQuestion } from "@/storage/database/shared/schema";
 import { inArray, eq, sql } from "drizzle-orm";
@@ -24,20 +24,28 @@ export async function POST(request: NextRequest) {
     console.log("Grade exam: text extracted, length =", text.length);
 
     // 使用 LLM 解析试卷答案
-    const parsePrompt = `请从以下试卷中提取所有题目和用户的答案，按照JSON格式返回。格式要求：
+    const parsePrompt = `请从以下试卷中提取所有题目和用户的答案。
+
+【输入试卷内容】
+${text}
+
+【输出格式要求】
+返回JSON数组，每个元素包含：
+- question: 题目内容（字符串）
+- userAnswer: 用户作答内容（字符串，未作答则为空字符串""）
+
+【示例输出】
 [
-  {
-    "question": "题目内容",
-    "userAnswer": "用户作答内容"
-  }
+  {"question": "植物进行光合作用的场所是？", "userAnswer": "A"},
+  {"question": "人体最大的器官是？", "userAnswer": ""},
+  {"question": "简述光合作用的意义。", "userAnswer": "光合作用可以为植物提供有机物..."}
 ]
 
-注意：
-1. 只返回JSON数组，不要有其他内容
-2. 如果用户没有作答，userAnswer 设为空字符串
-
-试卷内容：
-${text}`;
+【注意事项】
+1. 只返回JSON数组，不要有任何其他文字
+2. 确保JSON格式正确，字段名必须是 "question" 和 "userAnswer"
+3. 如果用户没有作答，userAnswer 必须是空字符串 ""
+4. 题目内容要完整提取，不要遗漏`;
 
     console.log("Grade exam: calling LLM to parse answers...");
 
@@ -57,14 +65,13 @@ ${text}`;
 
     console.log("Grade exam: LLM response received, length =", parseResponseText.length);
 
-    // 解析 LLM 返回的 JSON
+    // 解析 LLM 返回的 JSON（带修复功能）
     let answers;
     try {
-      const content = extractJSON(parseResponseText);
-      answers = JSON.parse(content);
+      answers = parseJSONWithRepair(parseResponseText);
     } catch (e) {
       console.error("Failed to parse LLM response:", parseResponseText.substring(0, 500));
-      return NextResponse.json({ error: "试卷解析失败" }, { status: 400 });
+      return NextResponse.json({ error: "试卷解析失败，请检查试卷格式" }, { status: 400 });
     }
 
     if (!Array.isArray(answers) || answers.length === 0) {
@@ -141,14 +148,13 @@ ${JSON.stringify(answers, null, 2)}
 
     console.log("Grade exam: grading response received, length =", gradeResponseText.length);
 
-    // 解析批改结果
+    // 解析批改结果（带修复功能）
     let gradeResult;
     try {
-      const content = extractJSON(gradeResponseText);
-      gradeResult = JSON.parse(content);
+      gradeResult = parseJSONWithRepair(gradeResponseText);
     } catch (e) {
       console.error("Failed to parse grade response:", gradeResponseText.substring(0, 500));
-      return NextResponse.json({ error: "批改失败" }, { status: 500 });
+      return NextResponse.json({ error: "批改失败，请重试" }, { status: 500 });
     }
 
     // 保存错题到错题集（带去重和计数逻辑）
