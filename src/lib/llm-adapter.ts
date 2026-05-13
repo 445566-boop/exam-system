@@ -155,6 +155,39 @@ export function repairJSON(text: string): string {
   repaired = repaired.replace(/"\s*\{/g, '",{');
   repaired = repaired.replace(/\}\s*"/g, '},"');
   
+  // 修复不完整的字符串值 (如 "correctAnswer": " 后面没有闭合)
+  // 找到所有不完整的字符串并补全
+  repaired = repaired.replace(/"([^"]+)":\s*"[^"]*$/gm, '"$1": ""');
+  
+  // 修复被截断的对象 (如缺少闭合的 } )
+  // 找到最后一个看起来完整的对象
+  const objectPattern = /\{\s*"question"\s*:[^}]*"userAnswer"\s*:[^}]*\}/g;
+  const matches = repaired.match(objectPattern);
+  
+  if (matches && matches.length > 0) {
+    // 尝试重建数组
+    const validObjects: string[] = [];
+    let tempText = repaired;
+    
+    // 提取所有能匹配的完整对象
+    let match;
+    const regex = /\{\s*"question"\s*:\s*"[^"]*"[^}]*"userAnswer"\s*:\s*"[^"]*"[^}]*\}/g;
+    while ((match = regex.exec(tempText)) !== null) {
+      validObjects.push(match[0]);
+    }
+    
+    if (validObjects.length > 0) {
+      // 如果原始是数组格式，返回数组
+      if (repaired.trim().startsWith('[') || repaired.includes('"results"')) {
+        // 检查是否有 results 包装
+        if (repaired.includes('"results"')) {
+          return JSON.stringify({ results: validObjects.map(o => JSON.parse(o)), score: 0, total: validObjects.length });
+        }
+        return '[' + validObjects.join(',') + ']';
+      }
+    }
+  }
+  
   // 修复缺少的右括号/右方括号
   const openBraces = (repaired.match(/\{/g) || []).length;
   const closeBraces = (repaired.match(/\}/g) || []).length;
@@ -204,19 +237,56 @@ export function parseJSONWithRepair(text: string): any {
         // 对于数组，尝试逐个解析元素
         if (repaired.startsWith('[')) {
           const items: any[] = [];
-          // 使用正则匹配每个对象
-          const objectRegex = /\{[^{}]*"question"[^{}]*\}/g;
+          // 使用正则匹配每个对象 - 更宽松的匹配
+          const objectRegex = /\{\s*"question"\s*:\s*"[^"]*"[^}]*\}/g;
           let match;
           while ((match = objectRegex.exec(repaired)) !== null) {
             try {
-              const obj = JSON.parse(match[0]);
-              items.push(obj);
+              // 尝试修复单个对象
+              let objStr = match[0];
+              // 确保所有字段都有值
+              objStr = objStr.replace(/"([^"]+)":\s*"(?!\s*[},])/g, '"$1": "');
+              const obj = JSON.parse(objStr);
+              if (obj.question) {
+                items.push(obj);
+              }
             } catch {
               // 跳过无法解析的对象
             }
           }
           if (items.length > 0) {
             return items;
+          }
+        }
+        
+        // 对于带 results 的对象
+        if (repaired.includes('"results"')) {
+          const items: any[] = [];
+          const objectRegex = /\{\s*"question"\s*:\s*"[^"]*"[^}]*"userAnswer"\s*:[^}]*\}/g;
+          let match;
+          while ((match = objectRegex.exec(repaired)) !== null) {
+            try {
+              let objStr = match[0];
+              objStr = objStr.replace(/"([^"]+)":\s*"(?!\s*[},])/g, '"$1": "');
+              const obj = JSON.parse(objStr);
+              if (obj.question) {
+                // 确保必要字段存在
+                obj.userAnswer = obj.userAnswer || '';
+                obj.correctAnswer = obj.correctAnswer || '';
+                obj.isCorrect = obj.isCorrect || false;
+                obj.questionId = obj.questionId || 0;
+                items.push(obj);
+              }
+            } catch {
+              // 跳过无法解析的对象
+            }
+          }
+          if (items.length > 0) {
+            return {
+              results: items,
+              score: items.filter(i => i.isCorrect).length,
+              total: items.length
+            };
           }
         }
       } catch (e3) {
