@@ -178,8 +178,8 @@ export async function POST(request: NextRequest) {
     const allQuestions: any[] = [];
     
     // 将文本按题目分割
-    // 只匹配行首的题目编号（1. 2. 3. 等），不匹配选项（A. B. C.）或中间的数字
-    const questionPattern = /^(?=\d+[.、．\s])/gm;
+    // 特化格式：匹配 "数字. 【题型】" 作为分界点（如 "1. 【单选题】" "44. 【简答题】"）
+    const questionPattern = /^(?=\d+\.\s*【.+?】)/gm;
     const questionBlocks = text.split(questionPattern).filter(block => block.trim());
     
     console.log(`Found ${questionBlocks.length} question blocks`);
