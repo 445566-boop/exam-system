@@ -247,6 +247,15 @@ function extractStandardObjects(jsonStr: string): any[] {
             fixed = fixed.replace(/"\s*\n\s*"/g, '",\n"');
             // 修复缺少冒号的属性（如 "t "判断" -> "t": "判断"）
             fixed = fixed.replace(/"([a-zA-Z])"\s+"([^"]*)"/g, '"$1": "$2"');
+            // 修复缺少引号的值（如 "a":×" -> "a":"×"）
+            fixed = fixed.replace(/"([a-zA-Z])"\s*:\s*([^"[\{][^,}\]]*)/g, (match, key, value) => {
+              const trimmed = value.trim();
+              // 如果值已经是字符串字面量，不需要加引号
+              if (trimmed.startsWith('"') || trimmed.startsWith('[') || trimmed.startsWith('{') || /^\d+$/.test(trimmed)) {
+                return match;
+              }
+              return `"${key}": "${trimmed}"`;
+            });
             // 修复未闭合的数组和对象
             const openBrackets = (fixed.match(/\[/g) || []).length;
             const closeBrackets = (fixed.match(/\]/g) || []).length;
@@ -267,19 +276,22 @@ function extractStandardObjects(jsonStr: string): any[] {
           } catch (objErr) {
             // 最后尝试：用正则提取关键字段
             try {
-              // 更宽松的正则，匹配各种引号和格式
+              // 更宽松的正则，匹配各种引号和格式，包括缺少引号的值
               const qMatch = objStr.match(/["']q["']\s*[:：]\s*["']([^"']*)["']/) || 
+                             objStr.match(/["']q["']\s*[:：]\s*([^\n",}]+)/) ||
                              objStr.match(/q\s*[:：]\s*["']([^"']*)["']/);
               const aMatch = objStr.match(/["']a["']\s*[:：]\s*["']([^"']*)["']/) ||
+                             objStr.match(/["']a["']\s*[:：]\s*([^\n",}\]]+)/) ||
                              objStr.match(/a\s*[:：]\s*["']([^"']*)["']/);
               const tMatch = objStr.match(/["']t["']\s*[:：]\s*["']([^"']*)["']/) ||
+                             objStr.match(/["']t["']\s*[:：]\s*([^\n",}]+)/) ||
                              objStr.match(/t\s*[:：]\s*["']([^"']*)["']/);
               const dMatch = objStr.match(/["']d["']\s*[:：]\s*(\d)/);
               if (qMatch && aMatch) {
                 objects.push({
-                  q: qMatch[1],
-                  a: aMatch[1],
-                  t: tMatch ? tMatch[1] : '填空',
+                  q: qMatch[1].trim(),
+                  a: aMatch[1].trim(),
+                  t: tMatch ? tMatch[1].trim() : '填空',
                   d: dMatch ? parseInt(dMatch[1]) : 1,
                   o: null
                 });
