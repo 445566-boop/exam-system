@@ -173,8 +173,8 @@ export async function POST(request: NextRequest) {
     
     console.log(`Document has ${lines.length} lines, estimated ${estimatedQuestionCount} questions`);
 
-    // 分批处理，每批处理约15道题（减少批量以提高LLM输出质量）
-    const BATCH_SIZE = 15;
+    // 分批处理，每批处理约30道题
+    const BATCH_SIZE = 30;
     const allQuestions: any[] = [];
     
     // 将文本按题目分割
