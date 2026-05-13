@@ -242,7 +242,15 @@ function extractStandardObjects(jsonStr: string): any[] {
               .replace(/"/g, '"')
               .replace(/"/g, '"');
             // 修复尾随逗号
-            fixed = fixed.replace(/,(\s*})/g, '$1');
+            fixed = fixed.replace(/,(\s*[}\]])/g, '$1');
+            // 修复缺少逗号的数组元素
+            fixed = fixed.replace(/"\s*\n\s*"/g, '",\n"');
+            // 修复未闭合的数组
+            const openBrackets = (fixed.match(/\[/g) || []).length;
+            const closeBrackets = (fixed.match(/\]/g) || []).length;
+            if (openBrackets > closeBrackets) {
+              fixed = fixed + ']'.repeat(openBrackets - closeBrackets);
+            }
             
             const obj = JSON.parse(fixed);
             // 验证是否有有效字段
@@ -250,8 +258,23 @@ function extractStandardObjects(jsonStr: string): any[] {
               objects.push(obj);
             }
           } catch (objErr) {
-            // 跳过无法解析的对象
-            console.log(`Failed to parse object: ${objStr.substring(0, 100)}...`);
+            // 最后尝试：用正则提取关键字段
+            try {
+              const qMatch = objStr.match(/"q"\s*:\s*"([^"]*)"/);
+              const aMatch = objStr.match(/"a"\s*:\s*"([^"]*)"/);
+              const tMatch = objStr.match(/"t"\s*:\s*"([^"]*)"/);
+              if (qMatch && aMatch) {
+                objects.push({
+                  q: qMatch[1],
+                  a: aMatch[1],
+                  t: tMatch ? tMatch[1] : '填空',
+                  d: 1,
+                  o: null
+                });
+              }
+            } catch {
+              console.log(`Failed to parse object: ${objStr.substring(0, 100)}...`);
+            }
           }
           startIdx = -1;
         }
