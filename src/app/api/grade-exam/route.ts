@@ -147,8 +147,16 @@ ${text}
       return NextResponse.json({ error: "未能匹配到题库中的题目" }, { status: 400 });
     }
 
-    // 本地批改（不再使用 LLM 批改，避免输出过长）
-    const results = matchedQuestions.map((q) => {
+    // 分离客观题和主观题
+    const objectiveQuestions = matchedQuestions.filter(q => 
+      ["单选", "多选", "判断", "填空"].includes(q.type)
+    );
+    const subjectiveQuestions = matchedQuestions.filter(q => q.type === "简答");
+
+    console.log("Grade exam: objective questions =", objectiveQuestions.length, ", subjective questions =", subjectiveQuestions.length);
+
+    // 客观题本地批改
+    const objectiveResults = objectiveQuestions.map((q) => {
       const userAnswer = (q.userAnswer || "").trim().toUpperCase();
       const correctAnswer = (q.correctAnswer || "").trim().toUpperCase();
       
@@ -168,12 +176,6 @@ ${text}
       } else if (q.type === "填空") {
         // 填空题：关键词匹配
         isCorrect = userAnswer.length > 0 && correctAnswer.includes(userAnswer);
-      } else if (q.type === "简答") {
-        // 简答题：检查是否有实质内容
-        isCorrect = userAnswer.length > 10;
-      } else {
-        // 其他类型：直接比较
-        isCorrect = userAnswer === correctAnswer;
       }
 
       return {
@@ -189,6 +191,80 @@ ${text}
         subject: q.subject,
       };
     });
+
+    // 主观题（简答题）LLM 智能批改
+    const subjectiveResults = [];
+    for (const q of subjectiveQuestions) {
+      const userAnswer = (q.userAnswer || "").trim();
+      const correctAnswer = (q.correctAnswer || "").trim();
+      
+      let isCorrect = false;
+      
+      // 如果用户没有作答，直接判错
+      if (userAnswer.length === 0) {
+        isCorrect = false;
+        console.log("Grade exam: subjective question empty answer, isCorrect = false");
+      } else {
+        // 调用 LLM 智能批改
+        console.log("Grade exam: calling LLM to grade subjective question...");
+        
+        const gradePrompt = `你是一位专业的阅卷老师，请批改以下简答题。
+
+【题目】
+${q.question}
+
+【参考答案】
+${correctAnswer}
+
+【学生答案】
+${userAnswer}
+
+【批改要求】
+1. 判断学生答案是否正确或部分正确
+2. 学生的答案只要意思对、关键点答到即可，不必与参考答案完全一致
+3. 返回JSON格式：{"isCorrect": true/false}
+
+【示例】
+如果学生答案包含了参考答案的关键点，返回 {"isCorrect": true}
+如果学生答案完全错误或偏离题意，返回 {"isCorrect": false}
+
+只返回JSON，不要其他文字。`;
+
+        let gradeResponse = "";
+        try {
+          await streamLLM(
+            [{ role: "user", content: gradePrompt }],
+            (chunk) => {
+              gradeResponse += chunk;
+            }
+          );
+          
+          const gradeResult = parseJSONWithRepair(gradeResponse);
+          isCorrect = gradeResult.isCorrect === true;
+          console.log("Grade exam: LLM graded, isCorrect =", isCorrect);
+        } catch (error) {
+          console.error("Grade exam: LLM grading failed:", error);
+          // LLM 批改失败时，降级为长度判断
+          isCorrect = userAnswer.length > 20;
+        }
+      }
+
+      subjectiveResults.push({
+        questionId: q.id,
+        question: q.question,
+        userAnswer: q.userAnswer,
+        correctAnswer: q.correctAnswer,
+        isCorrect,
+        type: q.type,
+        difficulty: q.difficulty,
+        options: q.options,
+        explanation: q.explanation,
+        subject: q.subject,
+      });
+    }
+
+    // 合并所有结果
+    const results = [...objectiveResults, ...subjectiveResults];
 
     const score = results.filter((r) => r.isCorrect).length;
     const total = results.length;
