@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [registerUsername, setRegisterUsername] = useState("");
@@ -36,7 +38,10 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (response.ok) {
-        setMessage({ type: "success", text: "登录成功！" });
+        setMessage({ type: "success", text: "登录成功！正在跳转..." });
+        setTimeout(() => {
+          router.push("/");
+        }, 1000);
       } else {
         setMessage({ type: "error", text: data.error || "登录失败" });
       }

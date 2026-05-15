@@ -1,28 +1,41 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Upload, FileText, CheckSquare, BookX } from "lucide-react";
+import { Upload, FileText, CheckSquare, BookX, LogOut } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import UploadQuestionBank from "@/components/upload-question-bank";
 import GenerateExam from "@/components/generate-exam";
 import GradeExam from "@/components/grade-exam";
 import WrongQuestions from "@/components/wrong-questions";
 
 export default function Home() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState("upload");
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-950 dark:to-blue-950">
       {/* Header */}
       <header className="border-b bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
-        <div className="container mx-auto px-4 py-6">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
-            智能试卷管理系统——22050815陆铮杰
-          </h1>
-          <p className="text-slate-600 dark:text-slate-400 mt-2">
-            上传题库、生成试卷、自动批改、错题管理一站式解决
-          </p>
+        <div className="container mx-auto px-4 py-6 flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
+              智能试卷管理系统——22050815陆铮杰
+            </h1>
+            <p className="text-slate-600 dark:text-slate-400 mt-2">
+              上传题库、生成试卷、自动批改、错题管理一站式解决
+            </p>
+          </div>
+          <Button 
+            variant="outline" 
+            onClick={() => router.push("/login")}
+            className="flex items-center gap-2"
+          >
+            <LogOut className="h-4 w-4" />
+            退出登录
+          </Button>
         </div>
       </header>
 
