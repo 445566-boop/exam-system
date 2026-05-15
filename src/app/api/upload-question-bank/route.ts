@@ -234,6 +234,8 @@ export async function POST(request: NextRequest) {
       for (const q of questionsToInsert) {
         await db.insert(questionBank).values(q);
         insertedCount++;
+        // 添加延时，模拟处理时间
+        await new Promise(resolve => setTimeout(resolve, 50 + Math.random() * 50));
       }
     } else {
       console.log("Using Supabase database");
