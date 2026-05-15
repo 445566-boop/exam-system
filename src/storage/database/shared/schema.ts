@@ -77,3 +77,11 @@ export const examSubmission = pgTable("exam_submission", {
 	total: integer("total"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow(),
 });
+
+// 用户表 - 存储账号密码
+export const user = pgTable("user", {
+	id: serial("id").primaryKey(),
+	username: text("username").notNull().unique(),
+	password: text("password").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow(),
+});
