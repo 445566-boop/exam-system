@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Upload, FileText, CheckSquare, BookX, LogOut } from "lucide-react";
+import { Upload, FileText, CheckSquare, BookX, LogOut, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import UploadQuestionBank from "@/components/upload-question-bank";
 import GenerateExam from "@/components/generate-exam";
@@ -14,6 +14,36 @@ import WrongQuestions from "@/components/wrong-questions";
 export default function Home() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("upload");
+  const [isChecking, setIsChecking] = useState(true);
+
+  // 检查登录状态
+  useEffect(() => {
+    const isLoggedIn = localStorage.getItem("isLoggedIn");
+    if (isLoggedIn !== "true") {
+      router.push("/login");
+    } else {
+      setIsChecking(false);
+    }
+  }, [router]);
+
+  // 退出登录
+  const handleLogout = () => {
+    localStorage.removeItem("isLoggedIn");
+    localStorage.removeItem("username");
+    router.push("/login");
+  };
+
+  // 加载中状态
+  if (isChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50">
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+          <span className="text-slate-600">验证登录状态...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-950 dark:to-blue-950">
@@ -30,7 +60,7 @@ export default function Home() {
           </div>
           <Button 
             variant="outline" 
-            onClick={() => router.push("/login")}
+            onClick={handleLogout}
             className="flex items-center gap-2"
           >
             <LogOut className="h-4 w-4" />

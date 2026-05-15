@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,14 @@ export default function LoginPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: "", text: "" });
+
+  // 检查是否已登录
+  useEffect(() => {
+    const isLoggedIn = localStorage.getItem("isLoggedIn");
+    if (isLoggedIn === "true") {
+      router.push("/");
+    }
+  }, [router]);
 
   // 登录
   const handleLogin = async (e: React.FormEvent) => {
@@ -38,6 +46,9 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (response.ok) {
+        // 设置登录状态
+        localStorage.setItem("isLoggedIn", "true");
+        localStorage.setItem("username", loginUsername);
         setMessage({ type: "success", text: "登录成功！正在跳转..." });
         setTimeout(() => {
           router.push("/");
